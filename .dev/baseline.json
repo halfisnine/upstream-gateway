@@ -1,0 +1,15 @@
+{
+  "prepared_at": "2026-11-16",
+  "repository": "https://github.com/halfisnine/upstream-gateway",
+  "development_branch": "main",
+  "starting_commit": "1ef15a6bc6c6eb326d72daa6a8329681a9bfef87",
+  "source": "independent copy of existing clean domestic checkout; GitHub API head checked on 2026-11-16",
+  "instabox_unpushed_changes": "not imported; not deleted",
+  "remote_head_check": {
+    "project": "upstream-gateway",
+    "local_base": "1ef15a6bc6c6eb326d72daa6a8329681a9bfef87",
+    "remote_head": "1ef15a6bc6c6eb326d72daa6a8329681a9bfef87",
+    "matches": true,
+    "independent_objects": true
+  }
+}

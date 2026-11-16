@@ -1,0 +1,7 @@
+{
+  "go": {
+    "version": "1.26.10",
+    "domestic": "mirror.ccs.tencentyun.com/library/golang:1.26.10-bookworm@sha256:5de7c99eb78ca5e515a4c340235d0955ec5964a5071c492c15503d7c267da473",
+    "official": "golang:1.26.10-bookworm@sha256:5de7c99eb78ca5e515a4c340235d0955ec5964a5071c492c15503d7c267da473"
+  }
+}
