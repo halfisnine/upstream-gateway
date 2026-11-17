@@ -415,6 +415,12 @@ func TestRequestKeysAreIndependentWithoutConfigChanges(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		io.WriteString(w, `{"ok":true}`)
 	})
+	// This test exercises credential isolation, not overload. Permit all 20 callers.
+	c := testConfig(n.Current().Channels["a"].BaseURL)
+	c.TrafficLimits = config.TrafficLimits{Node: 32, Upstream: 32}
+	if err := n.Activate(c, 1, "test"); err != nil {
+		t.Fatal(err)
+	}
 	var wg sync.WaitGroup
 	for i := 0; i < 20; i++ {
 		wg.Add(1)

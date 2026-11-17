@@ -16,7 +16,7 @@ import (
 	"strings"
 )
 
-const Schema = 4
+const Schema = 5
 
 var ErrLegacyConfig = errors.New("legacy_configuration_requires_republish")
 
@@ -35,11 +35,30 @@ type Channel struct {
 	AllowHTTP bool                `json:"allow_http,omitempty"`
 	Protocols map[string]Endpoint `json:"protocols"`
 }
+
+// TrafficLimits apply independently on each node. Zero means the safe default,
+// never unlimited. Upstream concurrency counts requests, including HTTP/2 streams.
+type TrafficLimits struct {
+	Node     int `json:"node_concurrency,omitempty"`
+	Upstream int `json:"upstream_concurrency,omitempty"`
+}
+
+func (l TrafficLimits) Effective() TrafficLimits {
+	if l.Node == 0 {
+		l.Node = 32
+	}
+	if l.Upstream == 0 {
+		l.Upstream = 16
+	}
+	return l
+}
+
 type Config struct {
-	Schema                int       `json:"schema_version"`
-	Channels              []Channel `json:"channels"`
-	InspectEmbeddedErrors bool      `json:"inspect_embedded_errors"`
-	ErrorRules            []Rule    `json:"error_rules,omitempty"`
+	Schema                int           `json:"schema_version"`
+	TrafficLimits         TrafficLimits `json:"traffic_limits"`
+	Channels              []Channel     `json:"channels"`
+	InspectEmbeddedErrors bool          `json:"inspect_embedded_errors"`
+	ErrorRules            []Rule        `json:"error_rules,omitempty"`
 }
 
 func Empty() Config { return Config{Schema: Schema, Channels: []Channel{}} }
@@ -156,6 +175,10 @@ func Validate(c Config) error {
 	if c.Schema != Schema {
 		return errors.New("unsupported_schema")
 	}
+	limits := c.TrafficLimits.Effective()
+	if limits.Node < 1 || limits.Node > 8192 || limits.Upstream < 1 || limits.Upstream > limits.Node {
+		return errors.New("invalid_traffic_limits")
+	}
 	if len(c.Channels) > 128 {
 		return errors.New("too_many_channels")
 	}
@@ -215,7 +238,7 @@ func Seal(c Config, key []byte) ([]byte, string, error) {
 	if _, e = rand.Read(nonce); e != nil {
 		return nil, "", e
 	}
-	data := g.Seal(nonce, nonce, raw, []byte("upstream-gateway-schema-4"))
+	data := g.Seal(nonce, nonce, raw, []byte(fmt.Sprintf("upstream-gateway-schema-%d", Schema)))
 	sum := sha256.Sum256(data)
 	return data, hex.EncodeToString(sum[:]), nil
 }
@@ -226,7 +249,7 @@ func Open(data []byte, digest string, key []byte) (Config, error) {
 	if err != nil {
 		return c, err
 	}
-	if source != Schema && source != 3 {
+	if source != Schema && source != 4 && source != 3 {
 		return Empty(), ErrLegacyConfig
 	}
 	return c, nil
@@ -248,12 +271,12 @@ func OpenForEdit(data []byte, digest string, key []byte) (Config, int, error) {
 	if err != nil || len(data) < g.NonceSize() {
 		return fail("invalid_snapshot")
 	}
-	for _, schema := range []int{Schema, 3, 2} {
+	for _, schema := range []int{Schema, 4, 3, 2} {
 		raw, err := g.Open(nil, data[:g.NonceSize()], data[g.NonceSize():], []byte(fmt.Sprintf("upstream-gateway-schema-%d", schema)))
 		if err != nil {
 			continue
 		}
-		if schema == Schema || schema == 3 {
+		if schema == Schema || schema == 4 || schema == 3 {
 			c := Empty()
 			if err = Decode(raw, &c); err != nil {
 				return Empty(), 0, err
@@ -261,8 +284,11 @@ func OpenForEdit(data []byte, digest string, key []byte) (Config, int, error) {
 			if c.Schema != schema {
 				return fail("unsupported_schema")
 			}
+			if schema != Schema {
+				c.TrafficLimits = TrafficLimits{}
+			}
+			c.Schema = Schema
 			if schema == 3 {
-				c.Schema = Schema
 				c.InspectEmbeddedErrors = false
 				c.ErrorRules = nil
 			}

@@ -48,7 +48,7 @@ func TestRuleSampleAPIUsesRealMatcherWithoutUpstream(t *testing.T) {
 			t.Fatal(path, w.Code)
 		}
 	}
-	raw := `{"config":{"schema_version":4,"inspect_embedded_errors":true,"channels":[{"id":"a","name":"A","base_url":"https://example.invalid","protocols":{"openai_chat":{}}}],"error_rules":[{"id":"balance","name":"余额","enabled":true,"sources":["http","sse"],"return_status":503,"message":"SAFE"}]},"sample":{"channel":"a","protocol":"openai_chat","source":"sse","status":200,"committed":true,"error":{"message":"PRIVATE"}}}`
+	raw := `{"config":{"schema_version":5,"inspect_embedded_errors":true,"channels":[{"id":"a","name":"A","base_url":"https://example.invalid","protocols":{"openai_chat":{}}}],"error_rules":[{"id":"balance","name":"余额","enabled":true,"sources":["http","sse"],"return_status":503,"message":"SAFE"}]},"sample":{"channel":"a","protocol":"openai_chat","source":"sse","status":200,"committed":true,"error":{"message":"PRIVATE"}}}`
 	req := httptest.NewRequest("POST", "/api/error-test", strings.NewReader(raw))
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")

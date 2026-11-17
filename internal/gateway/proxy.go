@@ -47,8 +47,10 @@ func (w *observedWriter) Write(b []byte) (int, error) {
 	return n, err
 }
 
+// Active request limits live in Node.admit and cover HTTP/1 and HTTP/2.
+// Do not also queue in Transport behind a fixed per-host connection limit.
 func NewProxy(n *Node) *Proxy {
-	return &Proxy{node: n, transport: &http.Transport{Proxy: nil, DialContext: (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext, ForceAttemptHTTP2: true, MaxIdleConns: 128, MaxIdleConnsPerHost: 8, MaxConnsPerHost: 16, IdleConnTimeout: 90 * time.Second, TLSHandshakeTimeout: 10 * time.Second, ResponseHeaderTimeout: 180 * time.Second, MaxResponseHeaderBytes: 32 << 10, DisableCompression: true}, total: 1800 * time.Second, idle: 180 * time.Second, write: 30 * time.Second}
+	return &Proxy{node: n, transport: &http.Transport{Proxy: nil, DialContext: (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext, ForceAttemptHTTP2: true, MaxIdleConns: 128, MaxIdleConnsPerHost: 8, MaxConnsPerHost: 0, IdleConnTimeout: 90 * time.Second, TLSHandshakeTimeout: 10 * time.Second, ResponseHeaderTimeout: 180 * time.Second, MaxResponseHeaderBytes: 32 << 10, DisableCompression: true}, total: 1800 * time.Second, idle: 180 * time.Second, write: 30 * time.Second}
 }
 func (n *Node) Handler() http.Handler { return n.proxy }
 func protocol(path string) string {
@@ -262,19 +264,17 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		fail(proto, 413)
 		return
 	}
-	select {
-	case p.node.slots <- struct{}{}:
-		defer func() { <-p.node.slots }()
-	default:
+	eff := ch.Effective(proto)
+	target, _ := url.Parse(eff.BaseURL)
+	release, admitted := p.node.admit(target)
+	if !admitted {
+		w.Header().Set("Retry-After", "1")
 		fail(proto, 503)
 		return
 	}
-	p.node.active.Add(1)
-	defer p.node.active.Add(-1)
+	defer release()
 	ctx, cancel := context.WithTimeout(r.Context(), p.total)
 	defer cancel()
-	eff := ch.Effective(proto)
-	target, _ := url.Parse(eff.BaseURL)
 	target.Path = strings.TrimSuffix(target.Path, "/") + path
 	target.RawPath = ""
 	target.RawQuery = r.URL.RawQuery

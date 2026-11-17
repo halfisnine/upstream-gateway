@@ -50,7 +50,7 @@ async function api(url, method = "GET", body) {
   await new Promise((resolve) => mock.listen(0, "127.0.0.1", resolve));
   const upstream = "http://127.0.0.1:" + mock.address().port;
   const cfg = {
-    schema_version: 4,
+    schema_version: 5,
     inspect_embedded_errors: false,
     channels: [
       {
@@ -83,6 +83,25 @@ async function api(url, method = "GET", body) {
     await page.locator("#admin-token").fill(token);
     await page.locator("#login-submit").click();
     await page.locator("#workspace").waitFor({ state: "visible" });
+    await page.locator(".traffic-settings summary").click();
+    await page.locator("#node-concurrency").fill("64");
+    await page.locator("#upstream-concurrency").fill("128");
+    assert.equal(
+      await page.locator("#traffic-form").evaluate((f) => f.checkValidity()),
+      false,
+    );
+    await page.locator("#publish").click();
+    assert.equal(
+      (await api(base + "/api/status")).latest_version,
+      1,
+      "invalid limits must not publish",
+    );
+    await page.locator("#upstream-concurrency").fill("48");
+    assert.match(
+      await page.locator("#draft-state").innerText(),
+      /并发设置有修改/,
+    );
+    await page.screenshot({ path: path.join(output, "traffic-settings.png") });
     await page.locator('[data-tab="error-rules"]').click();
     await page.locator("#er-inspect").check();
     await page.locator("#er-presets").click();
@@ -131,6 +150,18 @@ async function api(url, method = "GET", body) {
       await new Promise((r) => setTimeout(r, 300));
     }
     assert(synced, "second node sync");
+    const syncedConfig = await api(second + "/api/versions/2");
+    assert.deepEqual(syncedConfig.config.traffic_limits, {
+      node_concurrency: 64,
+      upstream_concurrency: 48,
+    });
+    await page.locator('[data-tab="channels"]').click();
+    assert.equal(await page.locator("#node-concurrency").inputValue(), "64");
+    assert.equal(
+      await page.locator("#upstream-concurrency").inputValue(),
+      "48",
+    );
+    await page.locator('[data-tab="error-rules"]').click();
     const result = await fetch(data + "/r/test-provider/v1/chat/completions", {
       method: "POST",
       headers: {

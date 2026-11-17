@@ -7,6 +7,8 @@ const labels = {
   gemini: "Gemini",
 };
 const errors = {
+  invalid_traffic_limits:
+    "并发上限须为 1–8192 的整数，且上游上限不能大于节点总上限。",
   unauthorized: "管理员令牌无效，请重新登录。",
   version_conflict:
     "其他操作已发布了新版本。请重新加载最新配置后再编辑，当前内容尚未发布。",
@@ -22,14 +24,14 @@ const errors = {
 let token = "",
   latest = 0,
   base = 0,
-  draft = { schema_version: 4, channels: [] },
+  draft = { schema_version: 5, channels: [] },
   timer = null,
   busy = false,
   dirty = false,
   historyBefore = 0,
   refreshing = false,
   publishedIDs = new Set(),
-  publishedConfig = { schema_version: 4, channels: [] },
+  publishedConfig = { schema_version: 5, channels: [] },
   channelPage = 1,
   editor = null,
   detailVersion = null,
@@ -83,10 +85,18 @@ function mark() {
     !equal(draft.error_rules || [], publishedConfig.error_rules || []) ||
     !!draft.inspect_embedded_errors !==
       !!publishedConfig.inspect_embedded_errors;
-  dirty = added + modified + removed > 0 || ruleChanged;
+  const trafficChanged = !equal(
+    trafficLimits(draft),
+    trafficLimits(publishedConfig),
+  );
+  dirty =
+    added + modified + removed > 0 ||
+    ruleChanged ||
+    trafficChanged ||
+    !$("traffic-form").checkValidity();
   $("draft-indicator").classList.toggle("pending", dirty);
   $("draft-state").textContent = dirty
-    ? `待发布：新增 ${added} · 修改 ${modified} · 删除 ${removed}${ruleChanged ? " · 错误处理有修改" : ""}`
+    ? `待发布：新增 ${added} · 修改 ${modified} · 删除 ${removed}${ruleChanged ? " · 错误处理有修改" : ""}${trafficChanged ? " · 并发设置有修改" : ""}`
     : "当前配置没有未发布修改。";
 }
 async function api(path, method = "GET", body) {
@@ -142,6 +152,8 @@ function setBusy(value) {
     "logout",
     "login-submit",
     "restore-details",
+    "node-concurrency",
+    "upstream-concurrency",
   ])
     $(id).disabled = value;
   document
@@ -568,12 +580,48 @@ $("channel-next").addEventListener("click", () => {
   channelPage++;
   renderChannels();
 });
+function trafficLimits(cfg) {
+  return {
+    node_concurrency: cfg.traffic_limits?.node_concurrency || 32,
+    upstream_concurrency: cfg.traffic_limits?.upstream_concurrency || 16,
+  };
+}
+function trafficSummary() {
+  $("traffic-summary").textContent =
+    `（草稿：节点 ${$("node-concurrency").value} / 上游 ${$("upstream-concurrency").value}）`;
+  $("upstream-concurrency").setCustomValidity(
+    Number($("upstream-concurrency").value) >
+      Number($("node-concurrency").value)
+      ? "上游并发上限不能大于节点总并发上限"
+      : "",
+  );
+}
+$("traffic-form").addEventListener("submit", (e) => e.preventDefault());
+for (const id of ["node-concurrency", "upstream-concurrency"]) {
+  $(id).addEventListener("input", () => {
+    draft.traffic_limits = {
+      node_concurrency: Number($("node-concurrency").value),
+      upstream_concurrency: Number($("upstream-concurrency").value),
+    };
+    trafficSummary();
+    mark();
+    // Invalid/empty edits must remain dirty even when zero means a backend default.
+    if (!$("traffic-form").checkValidity()) {
+      dirty = true;
+      $("draft-state").textContent = "并发设置无效，请修正后发布。";
+    }
+  });
+}
 async function loadConfig() {
   const state = await api("/api/status");
   latest = state.latest_version;
   const v = await api("/api/versions/" + latest);
   base = latest;
   draft = v.config;
+  const limits = trafficLimits(draft);
+  $("node-concurrency").value = limits.node_concurrency;
+  $("upstream-concurrency").value = limits.upstream_concurrency;
+  trafficSummary();
   window.errorTools?.render();
   publishedConfig = structuredClone(draft);
   publishedIDs = new Set(draft.channels.map((ch) => ch.id));
@@ -869,7 +917,7 @@ $("logout").addEventListener("click", () => {
   $("state-filter").value = "";
   $("connection").hidden = true;
   clearInterval(timer);
-  draft = { schema_version: 4, channels: [] };
+  draft = { schema_version: 5, channels: [] };
   $("workspace").hidden = true;
   $("login").hidden = false;
   $("logout").hidden = true;
@@ -896,15 +944,26 @@ $("reload-config").addEventListener("click", () =>
     notice("已加载最新配置。");
   }),
 );
-$("publish").addEventListener("click", () =>
-  action(async () => {
+$("publish").addEventListener("click", () => {
+  if (!$("traffic-form").checkValidity()) {
+    document.querySelector('[data-tab="channels"]').click();
+    document.querySelector(".traffic-settings").open = true;
+    $("traffic-form").reportValidity();
+    notice("请修正并发设置后发布。", true);
+    return;
+  }
+  return action(async () => {
     if (
       !confirm(
         "发布当前全部 " +
           draft.channels.length +
           " 个渠道及 " +
           (draft.error_rules || []).length +
-          " 条错误规则的完整配置？各节点将在检查到更新后生效。",
+          " 条错误规则，以及并发上限（每节点 " +
+          trafficLimits(draft).node_concurrency +
+          " / 每上游 " +
+          trafficLimits(draft).upstream_concurrency +
+          "）的完整配置？各节点将在检查到更新后生效。",
       )
     )
       return;
@@ -917,8 +976,8 @@ $("publish").addEventListener("click", () =>
     if (!$("history").hidden) await history();
     $("publish-note").value = "";
     notice("V" + v.id + " 发布成功。请查看目标节点是否已生效。");
-  }),
-);
+  });
+});
 $("more-history").addEventListener("click", () => action(() => history(false)));
 $("close-details").addEventListener("click", () => $("details").close());
 document.querySelectorAll("[data-tab]").forEach((b) =>
@@ -988,6 +1047,11 @@ $("compare-details").addEventListener("click", () => {
   const byID = (cfg) =>
     Object.fromEntries(cfg.channels.map((ch) => [ch.id, ch]));
   compare(byID(detailVersion.config), byID(draft), "channels");
+  compare(
+    trafficLimits(detailVersion.config),
+    trafficLimits(draft),
+    "traffic_limits",
+  );
   compare(
     detailVersion.config.error_rules || [],
     draft.error_rules || [],

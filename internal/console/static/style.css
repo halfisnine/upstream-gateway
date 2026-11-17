@@ -1407,3 +1407,25 @@ pre {
     padding: 7px 10px;
   }
 }
+
+.traffic-settings {
+  padding: 16px 20px;
+  margin-bottom: 16px;
+}
+.traffic-settings summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.traffic-settings p {
+  line-height: 1.6;
+}
+.traffic-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+}
+.traffic-fields label {
+  display: grid;
+  gap: 8px;
+  flex: 1 1 200px;
+}

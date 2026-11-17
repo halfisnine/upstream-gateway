@@ -376,7 +376,7 @@ func TestLegacyHistoryConversionNeverRestoresCredentials(t *testing.T) {
 		t.Fatal("converted snapshot not activated", err)
 	}
 	updated, _ := s.Version(ctx, 2)
-	plain, err := g.Open(nil, updated.Data[:g.NonceSize()], updated.Data[g.NonceSize():], []byte("upstream-gateway-schema-4"))
+	plain, err := g.Open(nil, updated.Data[:g.NonceSize()], updated.Data[g.NonceSize():], []byte("upstream-gateway-schema-5"))
 	if err != nil || bytes.Contains(plain, []byte("OLD_")) || bytes.Contains(plain, []byte(`"key":`)) || bytes.Contains(plain, []byte("internal_token")) {
 		t.Fatal("old credentials persisted in new snapshot")
 	}

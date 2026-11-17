@@ -136,7 +136,7 @@ func TestSchemaThreeRuntimeUpgradeKeepsInspectionOff(t *testing.T) {
 		t.Fatal(c, e)
 	}
 	edited, source, e := OpenForEdit(data, digest, key)
-	if e != nil || source != 3 || edited.Schema != 4 {
+	if e != nil || source != 3 || edited.Schema != Schema {
 		t.Fatal(edited, source, e)
 	}
 }
@@ -152,5 +152,39 @@ func TestRuleValidationRejectsDanglingAndUnsafeConfiguration(t *testing.T) {
 		if Validate(c) == nil {
 			t.Fatal("invalid rule accepted")
 		}
+	}
+}
+
+func TestTrafficLimitsValidationAndSchemaFourUpgrade(t *testing.T) {
+	for _, limits := range []TrafficLimits{{Node: -1}, {Upstream: -1}, {Node: 8193, Upstream: 1}, {Node: 2, Upstream: 3}} {
+		c := valid()
+		c.TrafficLimits = limits
+		if Validate(c) == nil {
+			t.Fatalf("accepted invalid limits %+v", limits)
+		}
+	}
+	c := valid()
+	c.TrafficLimits = TrafficLimits{Node: 8192, Upstream: 4000}
+	key := bytes.Repeat([]byte{9}, 32)
+	data, digest, err := Seal(c, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := Open(data, digest, key)
+	if err != nil || got.TrafficLimits != c.TrafficLimits {
+		t.Fatal("limits lost", err)
+	}
+	c.Schema = 4
+	c.InspectEmbeddedErrors = true
+	c.TrafficLimits = TrafficLimits{}
+	raw, _ := json.Marshal(c)
+	block, _ := aes.NewCipher(key)
+	g, _ := cipher.NewGCM(block)
+	nonce := make([]byte, g.NonceSize())
+	data = g.Seal(nonce, nonce, raw, []byte("upstream-gateway-schema-4"))
+	sum := sha256.Sum256(data)
+	got, err = Open(data, hex.EncodeToString(sum[:]), key)
+	if err != nil || !got.InspectEmbeddedErrors || got.Schema != Schema || got.TrafficLimits.Effective() != (TrafficLimits{Node: 32, Upstream: 16}) {
+		t.Fatal("schema 4 conversion", err)
 	}
 }

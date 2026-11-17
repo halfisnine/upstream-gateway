@@ -120,10 +120,56 @@
         </nav>
         <section id="channels" class="tab-panel" aria-label="渠道配置">
           <div id="migration-notice" class="callout" hidden>
-            此配置来自旧版本。请核对渠道与错误检查设置后发布新版本。schema 3
-            保持原转发行为；旧凭证字段不会被恢复。旧历史不会被覆盖。
+            此配置来自旧版本。请核对渠道、并发与错误检查设置后发布新版本。schema
+            3 保持原转发行为；旧凭证字段不会被恢复。旧历史不会被覆盖。
           </div>
           <div class="callout" id="inspection-summary"></div>
+          <details class="panel traffic-settings">
+            <summary>
+              并发设置 <span id="traffic-summary" class="muted small"></span>
+            </summary>
+            <p class="muted">
+              每个节点独立执行以下上限，保存到完整配置版本后约 5
+              秒同步。调低上限不会中断正在进行的回答，超限的新请求返回
+              503，不排队。
+            </p>
+            <form id="traffic-form" class="traffic-fields">
+              <label
+                >节点总并发上限
+                <input
+                  id="node-concurrency"
+                  type="number"
+                  min="1"
+                  max="8192"
+                  step="1"
+                  required
+                  value="32"
+                />
+              </label>
+              <label
+                >每个上游并发上限
+                <input
+                  id="upstream-concurrency"
+                  type="number"
+                  min="1"
+                  max="8192"
+                  step="1"
+                  required
+                  value="16"
+                />
+              </label>
+            </form>
+            <p class="muted small">
+              同一协议、主机和端口的上游共用额度，不按渠道或 Key 分开。HTTP/2
+              的每个请求也占一个名额。可配置范围为
+              1–8192，上游上限不能大于节点上限。
+            </p>
+            <p class="muted small">
+              数值是保护上限，不是容量保证。提高前需按节点
+              CPU、内存、响应大小和上游配额验证；200 JSON
+              正文检查会缓存响应，大并发应特别关注内存。
+            </p>
+          </details>
           <div class="channel-toolbar panel">
             <div class="filters">
               <label class="search-field"

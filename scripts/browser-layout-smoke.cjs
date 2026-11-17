@@ -20,7 +20,7 @@ const channels = Array.from({ length: 36 }, (_, i) => ({
   },
 }));
 const snapshots = new Map([
-  [1, { schema_version: 4, channels: structuredClone(channels) }],
+  [1, { schema_version: 5, channels: structuredClone(channels) }],
 ]);
 let latest = 1,
   posts = [],

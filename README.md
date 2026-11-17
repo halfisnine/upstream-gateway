@@ -8,6 +8,7 @@
 
 - 中文运维页面：渠道编辑、多协议覆盖、完整版本发布、无凭证字段的历史、恢复版本、节点同步状态。
 - PostgreSQL 保存不可变完整快照；AES-256-GCM 加密，主密钥独立提供。
+- 每节点总并发与每上游并发可在页面动态配置，随完整版本发布，已有 SSE 不被切断；详见 [并发设置](docs/concurrency.md)。
 - 节点每 5 秒检查更新，校验后整体切换；新请求使用新配置，旧 SSE 请求继续原配置。
 - 单渠道支持 OpenAI Chat / Responses、Anthropic Messages、Gemini 生成与流式接口。
 - 按协议校验认证头并转发 New API 携带的 Key、非成功 HTTP 错误隔离、正常 JSON/gzip/SSE 转发及取消。

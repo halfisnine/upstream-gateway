@@ -22,24 +22,26 @@ type Snapshot struct {
 	Channels map[string]config.Channel
 	Rules    []config.Rule
 	Inspect  bool
+	Limits   config.TrafficLimits
 }
 type Node struct {
-	Store        *store.Store
-	Logs         *interceptlog.Writer
-	Key          []byte
-	ID, Instance string
-	current      atomic.Pointer[Snapshot]
-	draining     atomic.Bool
-	active       atomic.Int64
-	syncMu       sync.Mutex
-	statusMu     sync.Mutex
-	status       store.Node
-	slots        chan struct{}
-	proxy        *Proxy
+	Store          *store.Store
+	Logs           *interceptlog.Writer
+	Key            []byte
+	ID, Instance   string
+	current        atomic.Pointer[Snapshot]
+	draining       atomic.Bool
+	active         atomic.Int64
+	syncMu         sync.Mutex
+	statusMu       sync.Mutex
+	status         store.Node
+	admissionMu    sync.Mutex
+	upstreamActive map[string]int
+	proxy          *Proxy
 }
 
 func New(s *store.Store, key []byte, id string) *Node {
-	n := &Node{Store: s, Key: key, ID: id, Instance: RandomID(), slots: make(chan struct{}, 32)}
+	n := &Node{Store: s, Key: key, ID: id, Instance: RandomID(), upstreamActive: make(map[string]int)}
 	if s != nil {
 		n.Logs = interceptlog.New(s)
 	}
@@ -82,7 +84,7 @@ func (n *Node) Activate(c config.Config, v int64, digest string) error {
 	raw, _ := json.Marshal(c.ErrorRules)
 	var rules []config.Rule
 	_ = json.Unmarshal(raw, &rules)
-	snap := &Snapshot{Version: v, Digest: digest, Channels: map[string]config.Channel{}, Rules: rules, Inspect: c.InspectEmbeddedErrors}
+	snap := &Snapshot{Version: v, Digest: digest, Channels: map[string]config.Channel{}, Rules: rules, Inspect: c.InspectEmbeddedErrors, Limits: c.TrafficLimits.Effective()}
 	for _, ch := range c.Channels { // Take ownership without retaining the caller's mutable maps.
 		ps := make(map[string]config.Endpoint, len(ch.Protocols))
 		for p, e := range ch.Protocols {
