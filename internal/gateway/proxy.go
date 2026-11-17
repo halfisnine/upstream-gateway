@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
-	"log/slog"
 	"mime"
 	"net"
 	"net/http"
@@ -13,7 +11,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/halfisnine/upstream-gateway/internal/config"
@@ -89,10 +86,17 @@ func errorType(status int) string {
 	}
 }
 func safeError(w http.ResponseWriter, p string, status int, id string) {
+	safeMessage(w, p, status, id, "Request could not be completed.")
+}
+func safeMessage(w http.ResponseWriter, p string, status int, id, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Request-ID", id)
-	msg := "Request could not be completed. Reference: " + id
+	msg := message + " Reference: " + id
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(errorBody(p, status, msg))
+}
+func errorBody(p string, status int, msg string) any {
 	var body any
 	switch p {
 	case "anthropic_messages":
@@ -121,8 +125,7 @@ func safeError(w http.ResponseWriter, p string, status int, id string) {
 	default:
 		body = map[string]any{"error": map[string]any{"type": errorType(status), "message": msg, "code": "gateway_" + strconv.Itoa(status)}}
 	}
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(body)
+	return body
 }
 func validQuery(r *http.Request, p string) bool {
 	q, e := url.ParseQuery(r.URL.RawQuery)
@@ -197,26 +200,8 @@ func connectionHeaders(h http.Header) map[string]bool {
 }
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	id := "gw_" + RandomID()
-	started := time.Now()
 	observed := &observedWriter{ResponseWriter: w}
 	w = observed
-	var applied int64
-	defer func() {
-		cause := recover()
-		outcome := "http_completed"
-		if cause != nil {
-			outcome = "stream_aborted"
-		}
-		if r.Context().Err() != nil {
-			outcome = "client_canceled"
-		}
-		slog.Info("model request finished", "request_id", id, "config_version", applied,
-			"status", observed.status, "bytes_out", observed.bytes,
-			"duration_ms", time.Since(started).Milliseconds(), "outcome", outcome)
-		if cause != nil {
-			panic(cause)
-		}
-	}()
 	fail := func(proto string, status int) { safeError(w, proto, status, id) }
 	// Never clean or redirect malformed paths. Reject escaped delimiters and ambiguous decoding.
 	if strings.Contains(r.URL.EscapedPath(), "%") || strings.ContainsAny(r.URL.Path, "\\") || strings.Contains(r.URL.Path, "//") {
@@ -245,7 +230,6 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		fail(proto, 503)
 		return
 	}
-	applied = snap.Version
 	ch, ok := snap.Channels[parts[2]]
 	if !ok {
 		fail(proto, 404)
@@ -351,74 +335,5 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		status := resp.StatusCode
-		if status < 400 || status > 599 {
-			status = 502
-		}
-		if status == 429 || status == 503 {
-			if sec, e := strconv.Atoi(resp.Header.Get("Retry-After")); e == nil && sec >= 0 && sec <= 300 {
-				w.Header().Set("Retry-After", strconv.Itoa(sec))
-			}
-		}
-		fail(proto, status)
-		return
-	}
-	media, _, err := mime.ParseMediaType(resp.Header.Get("Content-Type"))
-	encoding := resp.Header.Get("Content-Encoding")
-	blocked := connectionHeaders(resp.Header)
-	if err != nil || (media != "application/json" && media != "text/event-stream") || (encoding != "" && encoding != "identity" && encoding != "gzip") || blocked["Content-Type"] || blocked["Content-Encoding"] {
-		fail(proto, 502)
-		return
-	}
-	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("X-Request-ID", id)
-	if encoding != "" {
-		w.Header().Set("Content-Encoding", encoding)
-	}
-	controller := http.NewResponseController(w)
-	_ = controller.SetWriteDeadline(time.Now().Add(p.write))
-	w.WriteHeader(200)
-	if media == "text/event-stream" {
-		if err = controller.Flush(); err != nil {
-			panic(http.ErrAbortHandler)
-		}
-	}
-	buf := make([]byte, 32<<10)
-	for {
-		// The timer only covers upstream reads, not downstream backpressure.
-		var mu sync.Mutex
-		finished := false
-		timer := time.AfterFunc(p.idle, func() {
-			mu.Lock()
-			defer mu.Unlock()
-			if !finished {
-				cancel()
-			}
-		})
-		count, readErr := resp.Body.Read(buf)
-		mu.Lock()
-		finished = true
-		timer.Stop()
-		mu.Unlock()
-		if count > 0 {
-			_ = controller.SetWriteDeadline(time.Now().Add(p.write))
-			if _, err = w.Write(buf[:count]); err != nil {
-				panic(http.ErrAbortHandler)
-			}
-			if media == "text/event-stream" {
-				if err = controller.Flush(); err != nil {
-					panic(http.ErrAbortHandler)
-				}
-			}
-		}
-		if readErr == io.EOF {
-			break
-		}
-		if readErr != nil {
-			panic(http.ErrAbortHandler)
-		}
-	}
-	_ = controller.SetWriteDeadline(time.Time{})
+	p.handleResponse(observed, r, resp, snap, ch.ID, proto, id, cancel)
 }

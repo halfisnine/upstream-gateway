@@ -20,7 +20,7 @@ const channels = Array.from({ length: 36 }, (_, i) => ({
   },
 }));
 const snapshots = new Map([
-  [1, { schema_version: 3, channels: structuredClone(channels) }],
+  [1, { schema_version: 4, channels: structuredClone(channels) }],
 ]);
 let latest = 1,
   posts = [],
@@ -115,6 +115,8 @@ const server = http.createServer(async (req, res) => {
     "/": "index.html",
     "/app.js": "app.js",
     "/style.css": "style.css",
+    "/rules.js": "rules.js",
+    "/rules.css": "rules.css",
   };
   const file = assets[url.pathname];
   if (!file) {
@@ -329,7 +331,7 @@ const server = http.createServer(async (req, res) => {
     );
     assert.equal(
       await page
-        .locator(".drawer-body")
+        .locator("#channel-editor .drawer-body")
         .evaluate((e) => e.scrollWidth > e.clientWidth),
       false,
     );

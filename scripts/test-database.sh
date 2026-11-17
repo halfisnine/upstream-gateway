@@ -24,7 +24,7 @@ docker run -d --name "$database" --network "$network" --network-alias database \
  --env-file "$private_dir/postgres.env" --tmpfs /var/lib/postgresql/data:rw \
  "$postgres_image" >/dev/null
 for attempt in 1 2 3 4 5 6 7 8 9 10; do
- if docker exec "$database" pg_isready -U gateway_test -d gateway_test >/dev/null 2>&1; then break; fi
+ if docker exec "$database" pg_isready -h 127.0.0.1 -U gateway_test -d gateway_test >/dev/null 2>&1; then break; fi
  sleep 1
 done
 docker run --rm --network "$network" --cpus=2 --memory=3g --memory-swap=3g \

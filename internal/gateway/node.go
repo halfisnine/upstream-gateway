@@ -4,7 +4,9 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"github.com/halfisnine/upstream-gateway/internal/interceptlog"
 	"log/slog"
 	"sync"
 	"sync/atomic"
@@ -18,9 +20,12 @@ type Snapshot struct {
 	Version  int64
 	Digest   string
 	Channels map[string]config.Channel
+	Rules    []config.Rule
+	Inspect  bool
 }
 type Node struct {
 	Store        *store.Store
+	Logs         *interceptlog.Writer
 	Key          []byte
 	ID, Instance string
 	current      atomic.Pointer[Snapshot]
@@ -35,6 +40,9 @@ type Node struct {
 
 func New(s *store.Store, key []byte, id string) *Node {
 	n := &Node{Store: s, Key: key, ID: id, Instance: RandomID(), slots: make(chan struct{}, 32)}
+	if s != nil {
+		n.Logs = interceptlog.New(s)
+	}
 	n.proxy = NewProxy(n)
 	return n
 }
@@ -51,6 +59,7 @@ func (n *Node) Drain()             { n.draining.Store(true) }
 func (n *Node) Close() {
 	n.Drain()
 	n.proxy.transport.CloseIdleConnections()
+	n.Logs.Close()
 	if n.Store != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
@@ -62,13 +71,18 @@ func (n *Node) Status() store.Node {
 	defer n.statusMu.Unlock()
 	s := n.status
 	s.Inflight = n.active.Load()
+	s.Logs = n.Logs.Stats()
+	s.Logs.Instance = n.Instance
 	return s
 }
 func (n *Node) Activate(c config.Config, v int64, digest string) error {
 	if err := config.Validate(c); err != nil {
 		return err
 	}
-	snap := &Snapshot{Version: v, Digest: digest, Channels: map[string]config.Channel{}}
+	raw, _ := json.Marshal(c.ErrorRules)
+	var rules []config.Rule
+	_ = json.Unmarshal(raw, &rules)
+	snap := &Snapshot{Version: v, Digest: digest, Channels: map[string]config.Channel{}, Rules: rules, Inspect: c.InspectEmbeddedErrors}
 	for _, ch := range c.Channels { // Take ownership without retaining the caller's mutable maps.
 		ps := make(map[string]config.Endpoint, len(ch.Protocols))
 		for p, e := range ch.Protocols {
@@ -133,6 +147,8 @@ func (n *Node) Sync(ctx context.Context) error {
 	}
 	status.Seen = time.Now().UTC()
 	status.Inflight = n.active.Load()
+	status.Logs = n.Logs.Stats()
+	status.Logs.Instance = n.Instance
 	n.setStatus(status)
 	reportErr := n.Store.Report(ctx, status)
 	if errors.Is(reportErr, store.ErrNodeConflict) {

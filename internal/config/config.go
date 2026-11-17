@@ -16,7 +16,7 @@ import (
 	"strings"
 )
 
-const Schema = 3
+const Schema = 4
 
 var ErrLegacyConfig = errors.New("legacy_configuration_requires_republish")
 
@@ -36,8 +36,10 @@ type Channel struct {
 	Protocols map[string]Endpoint `json:"protocols"`
 }
 type Config struct {
-	Schema   int       `json:"schema_version"`
-	Channels []Channel `json:"channels"`
+	Schema                int       `json:"schema_version"`
+	Channels              []Channel `json:"channels"`
+	InspectEmbeddedErrors bool      `json:"inspect_embedded_errors"`
+	ErrorRules            []Rule    `json:"error_rules,omitempty"`
 }
 
 func Empty() Config { return Config{Schema: Schema, Channels: []Channel{}} }
@@ -190,7 +192,7 @@ func Validate(c Config) error {
 			}
 		}
 	}
-	return nil
+	return ValidateRules(c.ErrorRules, c.Channels)
 }
 
 func Seal(c Config, key []byte) ([]byte, string, error) {
@@ -213,7 +215,7 @@ func Seal(c Config, key []byte) ([]byte, string, error) {
 	if _, e = rand.Read(nonce); e != nil {
 		return nil, "", e
 	}
-	data := g.Seal(nonce, nonce, raw, []byte("upstream-gateway-schema-3"))
+	data := g.Seal(nonce, nonce, raw, []byte("upstream-gateway-schema-4"))
 	sum := sha256.Sum256(data)
 	return data, hex.EncodeToString(sum[:]), nil
 }
@@ -224,7 +226,7 @@ func Open(data []byte, digest string, key []byte) (Config, error) {
 	if err != nil {
 		return c, err
 	}
-	if source != Schema {
+	if source != Schema && source != 3 {
 		return Empty(), ErrLegacyConfig
 	}
 	return c, nil
@@ -246,15 +248,23 @@ func OpenForEdit(data []byte, digest string, key []byte) (Config, int, error) {
 	if err != nil || len(data) < g.NonceSize() {
 		return fail("invalid_snapshot")
 	}
-	for _, schema := range []int{Schema, 2} {
+	for _, schema := range []int{Schema, 3, 2} {
 		raw, err := g.Open(nil, data[:g.NonceSize()], data[g.NonceSize():], []byte(fmt.Sprintf("upstream-gateway-schema-%d", schema)))
 		if err != nil {
 			continue
 		}
-		if schema == Schema {
+		if schema == Schema || schema == 3 {
 			c := Empty()
 			if err = Decode(raw, &c); err != nil {
 				return Empty(), 0, err
+			}
+			if c.Schema != schema {
+				return fail("unsupported_schema")
+			}
+			if schema == 3 {
+				c.Schema = Schema
+				c.InspectEmbeddedErrors = false
+				c.ErrorRules = nil
 			}
 			return c, schema, Validate(c)
 		}

@@ -56,7 +56,7 @@ func database(t *testing.T) *store.Store {
 	if e != nil {
 		t.Fatal("connect failed")
 	}
-	t.Cleanup(func() { s.DB.Close(); root.DB.Exec(`DROP SCHEMA ` + schema + ` CASCADE`); root.DB.Close() })
+	t.Cleanup(func() { s.Close(); root.DB.Exec(`DROP SCHEMA ` + schema + ` CASCADE`); root.Close() })
 	if e = s.Init(context.Background()); e != nil {
 		t.Fatal("migration failed", e)
 	}
@@ -376,7 +376,7 @@ func TestLegacyHistoryConversionNeverRestoresCredentials(t *testing.T) {
 		t.Fatal("converted snapshot not activated", err)
 	}
 	updated, _ := s.Version(ctx, 2)
-	plain, err := g.Open(nil, updated.Data[:g.NonceSize()], updated.Data[g.NonceSize():], []byte("upstream-gateway-schema-3"))
+	plain, err := g.Open(nil, updated.Data[:g.NonceSize()], updated.Data[g.NonceSize():], []byte("upstream-gateway-schema-4"))
 	if err != nil || bytes.Contains(plain, []byte("OLD_")) || bytes.Contains(plain, []byte(`"key":`)) || bytes.Contains(plain, []byte("internal_token")) {
 		t.Fatal("old credentials persisted in new snapshot")
 	}

@@ -35,3 +35,26 @@ func TestAssetsAndAuthorization(t *testing.T) {
 		t.Fatal("cross origin accepted")
 	}
 }
+
+func TestRuleSampleAPIUsesRealMatcherWithoutUpstream(t *testing.T) {
+	n := gateway.New(nil, nil, "test")
+	defer n.Close()
+	token := strings.Repeat("x", 32)
+	h := (&Console{Token: token, Node: n}).Handler()
+	for _, path := range []string{"/api/error-presets", "/api/interceptions", "/api/interceptions/test/original"} {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
+		if w.Code != 401 {
+			t.Fatal(path, w.Code)
+		}
+	}
+	raw := `{"config":{"schema_version":4,"inspect_embedded_errors":true,"channels":[{"id":"a","name":"A","base_url":"https://example.invalid","protocols":{"openai_chat":{}}}],"error_rules":[{"id":"balance","name":"余额","enabled":true,"sources":["http","sse"],"return_status":503,"message":"SAFE"}]},"sample":{"channel":"a","protocol":"openai_chat","source":"sse","status":200,"committed":true,"error":{"message":"PRIVATE"}}}`
+	req := httptest.NewRequest("POST", "/api/error-test", strings.NewReader(raw))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"actual_status":200`) || !strings.Contains(w.Body.String(), `"status_override_skipped":true`) || strings.Contains(w.Body.String(), "PRIVATE") {
+		t.Fatal(w.Code, w.Body.String())
+	}
+}

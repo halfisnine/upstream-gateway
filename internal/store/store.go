@@ -3,7 +3,9 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
+	"github.com/halfisnine/upstream-gateway/internal/interceptlog"
 	_ "github.com/lib/pq"
 	"time"
 )
@@ -19,17 +21,28 @@ type Version struct {
 	Data    []byte    `json:"-"`
 }
 type Node struct {
-	ID       string    `json:"id"`
-	Instance string    `json:"-"`
-	Desired  int64     `json:"desired_version"`
-	Applied  int64     `json:"applied_version"`
-	Digest   string    `json:"digest"`
-	Error    string    `json:"error"`
-	Seen     time.Time `json:"last_seen"`
-	Inflight int64     `json:"inflight"`
-	Online   bool      `json:"online"`
+	ID       string             `json:"id"`
+	Instance string             `json:"instance"`
+	Desired  int64              `json:"desired_version"`
+	Applied  int64              `json:"applied_version"`
+	Digest   string             `json:"digest"`
+	Error    string             `json:"error"`
+	Seen     time.Time          `json:"last_seen"`
+	Inflight int64              `json:"inflight"`
+	Online   bool               `json:"online"`
+	Logs     interceptlog.Stats `json:"logs"`
 }
-type Store struct{ DB *sql.DB }
+type Store struct {
+	DB    *sql.DB
+	LogDB *sql.DB
+}
+
+func (s *Store) Close() {
+	s.DB.Close()
+	if s.LogDB != nil {
+		s.LogDB.Close()
+	}
+}
 
 func Connect(dsn string) (*Store, error) {
 	db, e := sql.Open("postgres", dsn)
@@ -39,7 +52,15 @@ func Connect(dsn string) (*Store, error) {
 	db.SetMaxOpenConns(4)
 	db.SetMaxIdleConns(2)
 	db.SetConnMaxLifetime(5 * time.Minute)
-	return &Store{DB: db}, nil
+	logs, e := sql.Open("postgres", dsn)
+	if e != nil {
+		db.Close()
+		return nil, errors.New("invalid_database_configuration")
+	}
+	logs.SetMaxOpenConns(1)
+	logs.SetMaxIdleConns(1)
+	logs.SetConnMaxLifetime(5 * time.Minute)
+	return &Store{DB: db, LogDB: logs}, nil
 }
 func (s *Store) Init(ctx context.Context) error {
 	tx, e := s.DB.BeginTx(ctx, nil)
@@ -58,6 +79,18 @@ CREATE TABLE IF NOT EXISTS gateway_nodes (
  applied BIGINT NOT NULL, digest TEXT NOT NULL, error TEXT NOT NULL,
  seen TIMESTAMPTZ NOT NULL, inflight BIGINT NOT NULL
 );
+ALTER TABLE gateway_nodes ADD COLUMN IF NOT EXISTS log_stats JSONB NOT NULL DEFAULT '{}';
+CREATE TABLE IF NOT EXISTS gateway_interceptions (
+ id TEXT PRIMARY KEY, occurred_at TIMESTAMPTZ NOT NULL, request_id TEXT NOT NULL,
+ channel TEXT NOT NULL, rule_id TEXT NOT NULL, node TEXT NOT NULL, actual_status INTEGER NOT NULL,
+ event JSONB NOT NULL CHECK (octet_length(event::text)<=2048)
+);
+ALTER TABLE gateway_interceptions DROP CONSTRAINT IF EXISTS gateway_interceptions_event_check;
+ALTER TABLE gateway_interceptions ADD CONSTRAINT gateway_interceptions_event_check CHECK(octet_length(event::text)<=8192);
+CREATE INDEX IF NOT EXISTS gateway_interceptions_time ON gateway_interceptions(occurred_at DESC,id DESC);
+CREATE INDEX IF NOT EXISTS gateway_interceptions_request ON gateway_interceptions(request_id);
+CREATE TABLE IF NOT EXISTS gateway_log_maintenance(id INTEGER PRIMARY KEY CHECK(id=1),last_run TIMESTAMPTZ NOT NULL);
+INSERT INTO gateway_log_maintenance VALUES(1,'epoch') ON CONFLICT DO NOTHING;
 CREATE OR REPLACE FUNCTION gateway_reject_version_mutation() RETURNS trigger
 LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'published_snapshot_is_immutable'; END; $$;
 DROP TRIGGER IF EXISTS gateway_version_immutable ON gateway_versions;
@@ -121,7 +154,8 @@ func (s *Store) Publish(ctx context.Context, base int64, data []byte, digest, no
 	return v, tx.Commit()
 }
 func (s *Store) Report(ctx context.Context, n Node) error {
-	result, e := s.DB.ExecContext(ctx, `INSERT INTO gateway_nodes(id,instance,desired,applied,digest,error,seen,inflight) VALUES($1,$2,$3,$4,$5,$6,now(),$7) ON CONFLICT(id) DO UPDATE SET instance=EXCLUDED.instance, desired=EXCLUDED.desired, applied=EXCLUDED.applied, digest=EXCLUDED.digest,error=EXCLUDED.error,seen=now(),inflight=EXCLUDED.inflight WHERE gateway_nodes.instance=EXCLUDED.instance OR gateway_nodes.seen < now()-interval '20 seconds'`, n.ID, n.Instance, n.Desired, n.Applied, n.Digest, n.Error, n.Inflight)
+	stats, _ := json.Marshal(n.Logs)
+	result, e := s.DB.ExecContext(ctx, `INSERT INTO gateway_nodes(id,instance,desired,applied,digest,error,seen,inflight,log_stats) VALUES($1,$2,$3,$4,$5,$6,now(),$7,$8) ON CONFLICT(id) DO UPDATE SET instance=EXCLUDED.instance, desired=EXCLUDED.desired, applied=EXCLUDED.applied, digest=EXCLUDED.digest,error=EXCLUDED.error,seen=now(),inflight=EXCLUDED.inflight,log_stats=EXCLUDED.log_stats WHERE gateway_nodes.instance=EXCLUDED.instance OR gateway_nodes.seen < now()-interval '20 seconds'`, n.ID, n.Instance, n.Desired, n.Applied, n.Digest, n.Error, n.Inflight, string(stats))
 	if e != nil {
 		return e
 	}
@@ -132,7 +166,7 @@ func (s *Store) Report(ctx context.Context, n Node) error {
 	return e
 }
 func (s *Store) Nodes(ctx context.Context) ([]Node, error) {
-	rows, e := s.DB.QueryContext(ctx, `SELECT id,desired,applied,digest,error,seen,inflight,seen>now()-interval '20 seconds' FROM gateway_nodes ORDER BY id`)
+	rows, e := s.DB.QueryContext(ctx, `SELECT id,desired,applied,digest,error,seen,inflight,seen>now()-interval '20 seconds',instance,log_stats FROM gateway_nodes ORDER BY id`)
 	if e != nil {
 		return nil, e
 	}
@@ -140,7 +174,11 @@ func (s *Store) Nodes(ctx context.Context) ([]Node, error) {
 	out := []Node{}
 	for rows.Next() {
 		var n Node
-		if e = rows.Scan(&n.ID, &n.Desired, &n.Applied, &n.Digest, &n.Error, &n.Seen, &n.Inflight, &n.Online); e != nil {
+		var raw []byte
+		if e = rows.Scan(&n.ID, &n.Desired, &n.Applied, &n.Digest, &n.Error, &n.Seen, &n.Inflight, &n.Online, &n.Instance, &raw); e != nil {
+			return nil, e
+		}
+		if e = json.Unmarshal(raw, &n.Logs); e != nil {
 			return nil, e
 		}
 		out = append(out, n)

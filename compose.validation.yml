@@ -1,9 +1,16 @@
 # Local validation from a prebuilt image. No source build or production data mounts.
 name: upstream-gateway-validation
 
+x-logging: &bounded-logs
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 x-gateway: &gateway
   image: ${GATEWAY_VALIDATION_IMAGE:?Set GATEWAY_VALIDATION_IMAGE to the candidate image digest from GitHub Actions}
   platform: linux/amd64
+  logging: *bounded-logs
   read_only: true
   cap_drop: [ALL]
   security_opt: [no-new-privileges:true]
@@ -22,6 +29,7 @@ services:
   database:
     image: ${GATEWAY_VALIDATION_POSTGRES_IMAGE:-postgres@sha256:665dc7b37ac52a17e298511414c21d23ffa4e6a6ef6225b3e5d59c7afb35e994}
     platform: linux/amd64
+    logging: *bounded-logs
     environment:
       POSTGRES_DB: gateway_validation
       POSTGRES_USER: gateway_validation

@@ -121,3 +121,36 @@ func TestLegacyReadStripsSecretsAndRequiresRepublish(t *testing.T) {
 		t.Fatal("converted version failed", e)
 	}
 }
+
+func TestSchemaThreeRuntimeUpgradeKeepsInspectionOff(t *testing.T) {
+	key := bytes.Repeat([]byte{9}, 32)
+	block, _ := aes.NewCipher(key)
+	g, _ := cipher.NewGCM(block)
+	nonce := make([]byte, g.NonceSize())
+	raw := []byte(`{"schema_version":3,"channels":[{"id":"a","name":"A","base_url":"https://example.invalid","protocols":{"openai_chat":{}}}]}`)
+	data := g.Seal(nonce, nonce, raw, []byte("upstream-gateway-schema-3"))
+	sum := sha256.Sum256(data)
+	digest := hex.EncodeToString(sum[:])
+	c, e := Open(data, digest, key)
+	if e != nil || c.Schema != Schema || c.InspectEmbeddedErrors || len(c.ErrorRules) != 0 || len(c.Channels) != 1 {
+		t.Fatal(c, e)
+	}
+	edited, source, e := OpenForEdit(data, digest, key)
+	if e != nil || source != 3 || edited.Schema != 4 {
+		t.Fatal(edited, source, e)
+	}
+}
+func TestRuleValidationRejectsDanglingAndUnsafeConfiguration(t *testing.T) {
+	base := valid()
+	base.ErrorRules = []Rule{{ID: "test", Name: "test", Enabled: true, Sources: []string{"http"}, Message: "safe"}}
+	for _, mutate := range []func(*Rule){func(r *Rule) { r.Channels = []string{"missing"} }, func(r *Rule) { r.ReturnStatus = 200 }, func(r *Rule) { r.Statuses = []StatusRange{{500, 400}} }, func(r *Rule) { r.Sources = []string{"unknown"} }, func(r *Rule) { r.Message = "bad\nmessage" }, func(r *Rule) {
+		r.Groups = []ConditionGroup{{Conditions: []Condition{{Field: "raw_body", Operator: "contains", Values: []string{"x"}}}}}
+	}} {
+		c := base
+		c.ErrorRules = append([]Rule(nil), base.ErrorRules...)
+		mutate(&c.ErrorRules[0])
+		if Validate(c) == nil {
+			t.Fatal("invalid rule accepted")
+		}
+	}
+}

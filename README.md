@@ -11,12 +11,14 @@
 - 节点每 5 秒检查更新，校验后整体切换；新请求使用新配置，旧 SSE 请求继续原配置。
 - 单渠道支持 OpenAI Chat / Responses、Anthropic Messages、Gemini 生成与流式接口。
 - 按协议校验认证头并转发 New API 携带的 Key、非成功 HTTP 错误隔离、正常 JSON/gzip/SSE 转发及取消。
-- 不自动重试、续写、切换上游；200 JSON / SSE 内嵌错误尚未识别，不承诺全面信息隔离。
+- 可配置错误规则、预设与样本试匹配；可选检查标准 200 JSON / SSE 错误，规则随完整版本热更新。
+- 有界异步拦截日志与管理员查询；原始错误片段加密保存、按需查看，支持截断与凭证脱敏标记。
+- 不自动重试、续写、切换上游；未知错误格式和真实供应商兼容仍需验证，不承诺全面信息隔离。
 - 未配置数据库时保留 bootstrap 模式：仅管理健康接口，`/readyz` 为 503，无业务监听。
 
 上游 Key 只填写在 New API 中，不在网关渠道中保存。数据面访问来源由内部网络控制，管理页面仍需管理员令牌。旧配置升级见 [凭证转发说明](docs/credentials-passthrough.md)。
 
-现行设计见 [设计 v2](docs/design-v2.md)，启动、配置及多节点操作见 [运维说明](docs/operations.md)。旧 `.dev/reference/` 文档为历史背景，冲突处以 v2 为准。
+错误配置与升级见 [错误规则与日志](docs/error-rules.md)。现行设计见 [设计 v2](docs/design-v2.md)，启动、配置及多节点操作见 [运维说明](docs/operations.md)。旧 `.dev/reference/` 文档为历史背景，冲突处以 v2 为准。
 
 Linux 开发机可启动本项目独立控制台（仅回环监听，不连接生产数据）：
 

@@ -50,6 +50,10 @@ func (c *Console) Handler() http.Handler {
 	})
 	api := http.NewServeMux()
 	api.HandleFunc("GET /api/status", c.status)
+	api.HandleFunc("GET /api/error-presets", c.presets)
+	api.HandleFunc("POST /api/error-test", c.testRule)
+	api.HandleFunc("GET /api/interceptions", c.interceptions)
+	api.HandleFunc("GET /api/interceptions/{id}/original", c.originalError)
 	api.HandleFunc("GET /api/versions", c.versions)
 	api.HandleFunc("GET /api/versions/{id}", c.version)
 	api.HandleFunc("POST /api/publish", c.publish)
@@ -63,7 +67,7 @@ func (c *Console) Handler() http.Handler {
 			failure(w, 405, "method_not_allowed")
 			return
 		}
-		if r.URL.Path != "/" && r.URL.Path != "/app.js" && r.URL.Path != "/style.css" {
+		if r.URL.Path != "/" && r.URL.Path != "/app.js" && r.URL.Path != "/style.css" && r.URL.Path != "/rules.js" && r.URL.Path != "/rules.css" {
 			failure(w, 404, "not_found")
 			return
 		}

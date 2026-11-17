@@ -79,7 +79,7 @@ func run(migrate bool) error {
 		if e != nil {
 			return e
 		}
-		defer db.DB.Close()
+		defer db.Close()
 		if migrate {
 			c, cancel := context.WithTimeout(ctx, 30*time.Second)
 			defer cancel()

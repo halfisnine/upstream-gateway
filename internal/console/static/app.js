@@ -22,14 +22,14 @@ const errors = {
 let token = "",
   latest = 0,
   base = 0,
-  draft = { schema_version: 3, channels: [] },
+  draft = { schema_version: 4, channels: [] },
   timer = null,
   busy = false,
   dirty = false,
   historyBefore = 0,
   refreshing = false,
   publishedIDs = new Set(),
-  publishedConfig = { schema_version: 3, channels: [] },
+  publishedConfig = { schema_version: 4, channels: [] },
   channelPage = 1,
   editor = null,
   detailVersion = null,
@@ -79,10 +79,14 @@ function mark() {
   const removed = publishedConfig.channels.filter(
     (ch) => !draft.channels.some((item) => item.id === ch.id),
   ).length;
-  dirty = added + modified + removed > 0;
+  const ruleChanged =
+    !equal(draft.error_rules || [], publishedConfig.error_rules || []) ||
+    !!draft.inspect_embedded_errors !==
+      !!publishedConfig.inspect_embedded_errors;
+  dirty = added + modified + removed > 0 || ruleChanged;
   $("draft-indicator").classList.toggle("pending", dirty);
   $("draft-state").textContent = dirty
-    ? `待发布：新增 ${added} · 修改 ${modified} · 删除 ${removed}`
+    ? `待发布：新增 ${added} · 修改 ${modified} · 删除 ${removed}${ruleChanged ? " · 错误处理有修改" : ""}`
     : "当前配置没有未发布修改。";
 }
 async function api(path, method = "GET", body) {
@@ -305,6 +309,14 @@ function renderChannels() {
               )
             )
               return;
+            if (
+              (draft.error_rules || []).some((r) =>
+                (r.channels || []).includes(ch.id),
+              )
+            ) {
+              notice("此渠道被错误规则引用，请先修改或删除关联规则。", true);
+              return;
+            }
             draft.channels.splice(index, 1);
             mark();
             renderChannels();
@@ -562,6 +574,7 @@ async function loadConfig() {
   const v = await api("/api/versions/" + latest);
   base = latest;
   draft = v.config;
+  window.errorTools?.render();
   publishedConfig = structuredClone(draft);
   publishedIDs = new Set(draft.channels.map((ch) => ch.id));
   $("migration-notice").hidden = !v.requires_republish;
@@ -572,6 +585,7 @@ async function loadConfig() {
   renderStatus(state);
 }
 function renderStatus(s) {
+  window.errorTools?.status(s);
   latest = s.latest_version;
   $("latest").textContent = latest ? "V" + latest : "尚未发布";
   const synced = s.nodes.filter(
@@ -845,6 +859,7 @@ $("login-form").addEventListener("submit", (e) => {
 $("logout").addEventListener("click", () => {
   if (dirty && !confirm("退出登录将丢弃未发布草稿，确定退出？")) return;
   token = "";
+  window.errorTools?.clear();
   dirty = false;
   publishedIDs.clear();
   detailVersion = null;
@@ -854,7 +869,7 @@ $("logout").addEventListener("click", () => {
   $("state-filter").value = "";
   $("connection").hidden = true;
   clearInterval(timer);
-  draft = { schema_version: 3, channels: [] };
+  draft = { schema_version: 4, channels: [] };
   $("workspace").hidden = true;
   $("login").hidden = false;
   $("logout").hidden = true;
@@ -887,7 +902,9 @@ $("publish").addEventListener("click", () =>
       !confirm(
         "发布当前全部 " +
           draft.channels.length +
-          " 个渠道的配置？各节点将在检查到更新后生效。",
+          " 个渠道及 " +
+          (draft.error_rules || []).length +
+          " 条错误规则的完整配置？各节点将在检查到更新后生效。",
       )
     )
       return;
@@ -916,10 +933,12 @@ document.querySelectorAll("[data-tab]").forEach((b) =>
       .forEach((p) => (p.hidden = p.id !== b.dataset.tab));
     if (b.dataset.tab === "history") action(() => history());
     if (b.dataset.tab === "nodes") refresh();
+    if (b.dataset.tab === "error-rules") window.errorTools?.render();
+    if (b.dataset.tab === "intercept-logs") window.errorTools?.logs();
   }),
 );
 window.addEventListener("beforeunload", (e) => {
-  if (dirty || editorChanged()) {
+  if (dirty || editorChanged() || window.errorTools?.changed()) {
     e.preventDefault();
     e.returnValue = "";
   }
@@ -969,9 +988,19 @@ $("compare-details").addEventListener("click", () => {
   const byID = (cfg) =>
     Object.fromEntries(cfg.channels.map((ch) => [ch.id, ch]));
   compare(byID(detailVersion.config), byID(draft), "channels");
+  compare(
+    detailVersion.config.error_rules || [],
+    draft.error_rules || [],
+    "error_rules",
+  );
+  compare(
+    !!detailVersion.config.inspect_embedded_errors,
+    !!draft.inspect_embedded_errors,
+    "inspect_embedded_errors",
+  );
   $("diff-content").textContent = lines.length
     ? lines.join("\n\n")
-    : "渠道配置与当前草稿一致。";
+    : "完整配置与当前草稿一致。";
   $("detail-diff").hidden = false;
   $("detail-diff").scrollIntoView({ block: "nearest" });
 });
