@@ -15,6 +15,6 @@
 - Do not implement automatic model retries, continuations, or fallback requests.
 - Never commit credentials, production data, local tool authentication, or upstream keys.
 - Run `go test -race ./...`, `go vet ./...`, and the container smoke check for relevant changes.
-- PRs and ordinary main commits build only. Tags and explicit manual publication may push images.
+- PRs and ordinary main commits build only. Tags and explicit manual publication may push images. Manual publication from codex/ branches uses candidate-<full SHA> only, for local validation before merging main.
 - Publication must not deploy to a production server. Record the image digest for deployment.
 - Health/liveness does not imply readiness to accept model requests.

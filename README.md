@@ -56,13 +56,14 @@ docker run --rm --read-only --cap-drop ALL \
 | --- | --- | --- |
 | Pull request / main 分支提交 | 是 | 否 |
 | `v` 开头的版本标签 | 是 | 是，版本格式校验通过后 |
-| Actions 手动运行 | 是 | 仅 main 分支且勾选 publish 时 |
+| Actions 手动运行，选择 `codex/` 功能分支 | 是 | 勾选 publish 时发布 `candidate-完整提交号` |
+| Actions 手动运行，选择 main | 是 | 勾选 publish 时发布 `dev-完整提交号` |
 
 仓库需配置 `DOCKERHUB_USERNAME`、`DOCKERHUB_TOKEN` 两个 Actions Secrets。
 令牌仅在发布步骤注入，不写入源码和镜像。Actions 不部署或登录生产服务器。
 
 发布标签示例 `v0.0.0-bootstrap.1`，镜像具有同名标签和 `sha-完整提交` 标签。
-手动发布使用 `dev-完整提交`，不生成 latest。版本标签发布后不要移动或复用；
+功能分支仅通过手动发布生成 `candidate-完整提交`，不写 `sha-` 或正式版本标签；main 手动发布使用 `dev-完整提交`。均不生成 latest。版本标签发布后不要移动或复用；
 Docker Hub 标签本身仍可变，实际部署必须使用成功任务摘要中的 `image@sha256:...`。
 重新运行发布任务可能重写同名标签，应以记录的摘要为准。
 
@@ -70,3 +71,9 @@ Actions 只使用完整提交 SHA 锁定的 checkout Action；编译器镜像同
 GitHub 托管运行器和预装 Docker 由平台维护，并非全部系统组件都被冻结。
 
 先等待 main 检查通过，再发布版本标签。候选镜像必须先完成实际业务与真实模型验收，之后才按独立部署任务更新线上 New API 渠道。
+
+## 合并前拉取候选镜像验证
+
+功能开发和验证留在 `codex/` 分支，验证通过后再合并 main。Actions → Build and publish → Run workflow，选择功能分支并勾选 `publish`；测试通过后发布到 `vidbin/upstream-gateway:candidate-<完整提交号>`，不需要先合并 main。
+
+从运行摘要复制镜像 digest，使用本仓库的 `compose.validation.yml` 在本地启动独立数据库和网关。完整操作见 [Docker 候选版本验证](docs/docker-validation.md)。拉取、运行镜像不需要编译 Go；镜像发布本身不启动或更新任何服务器。

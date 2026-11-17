@@ -110,4 +110,4 @@ sh scripts/test-database.sh upstream-gateway-tests
 
 也可针对专用测试数据库运行 `.dev/run` 集成测试：将 URL 放入项目 `.dev/private` 文件，并设置 `GATEWAY_TEST_DATABASE_URL_FILE=/workspace/.dev/private/<文件名>`。测试只在自己创建的随机 schema 中读写并清理，测试账号需要 CREATE SCHEMA。禁止指向生产数据库。
 
-发布仍由版本标签或 main 上显式手动触发。普通提交和 PR 只测试构建。发布不部署；实际部署锁定镜像 digest。真实供应商、New API 结算/退款与目标机器容量在上线前独立验收。
+合并前可在 `codex/` 分支显式手动发布候选镜像，按 [Docker 验证说明](docker-validation.md) 拉取到独立本地环境验证，通过后再合并 main。正式发布沿用版本标签或 main 上显式手动触发。普通 main 提交和 PR 只测试构建；单独推送功能分支不触发工作流。发布不部署；实际部署锁定镜像 digest。真实供应商、New API 结算/退款与目标机器容量在上线前独立验收。

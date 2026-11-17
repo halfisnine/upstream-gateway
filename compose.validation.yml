@@ -1,0 +1,82 @@
+# Local validation from a prebuilt image. No source build or production data mounts.
+name: upstream-gateway-validation
+
+x-gateway: &gateway
+  image: ${GATEWAY_VALIDATION_IMAGE:?Set GATEWAY_VALIDATION_IMAGE to the candidate image digest from GitHub Actions}
+  platform: linux/amd64
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  mem_limit: 256m
+  cpus: 1
+  stop_grace_period: 40s
+  secrets: [database-url, master-key, admin-token]
+  environment: &gateway-env
+    GATEWAY_DATABASE_URL_FILE: /run/secrets/database-url
+    GATEWAY_MASTER_KEY_FILE: /run/secrets/master-key
+    GATEWAY_ADMIN_TOKEN_FILE: /run/secrets/admin-token
+    GATEWAY_LISTEN: 0.0.0.0:8080
+    GATEWAY_ADMIN_LISTEN: 0.0.0.0:9090
+
+services:
+  database:
+    image: ${GATEWAY_VALIDATION_POSTGRES_IMAGE:-postgres@sha256:665dc7b37ac52a17e298511414c21d23ffa4e6a6ef6225b3e5d59c7afb35e994}
+    platform: linux/amd64
+    environment:
+      POSTGRES_DB: gateway_validation
+      POSTGRES_USER: gateway_validation
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres-password
+    secrets: [postgres-password]
+    volumes: [database:/var/lib/postgresql/data]
+    mem_limit: 256m
+    cpus: 1
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U gateway_validation -d gateway_validation]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  migrate:
+    <<: *gateway
+    command: [--migrate]
+    depends_on:
+      database:
+        condition: service_healthy
+
+  gateway-a:
+    <<: *gateway
+    environment:
+      <<: *gateway-env
+      GATEWAY_NODE_ID: validation-a
+    ports:
+      - 127.0.0.1:19092:9090
+      - 127.0.0.1:18082:8080
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  gateway-b:
+    <<: *gateway
+    profiles: [multi-node]
+    environment:
+      <<: *gateway-env
+      GATEWAY_NODE_ID: validation-b
+    ports:
+      - 127.0.0.1:19093:9090
+      - 127.0.0.1:18083:8080
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  database:
+
+secrets:
+  database-url:
+    file: .dev/private/docker-validation/database-url
+  master-key:
+    file: .dev/private/docker-validation/master-key
+  admin-token:
+    file: .dev/private/docker-validation/admin-token
+  postgres-password:
+    file: .dev/private/docker-validation/postgres-password
