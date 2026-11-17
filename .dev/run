@@ -28,6 +28,7 @@ set -- docker run --rm --pull=never --platform linux/amd64 \
   --env GOCACHE=/cache/go-build --env GOMODCACHE=/cache/modules \
   --env "GOPROXY=${GOPROXY:-https://goproxy.cn,direct}" --env GOSUMDB=sum.golang.org \
   --env "CGO_ENABLED=${CGO_ENABLED:-0}" \
+  --env "GATEWAY_TEST_DATABASE_URL_FILE=${GATEWAY_TEST_DATABASE_URL_FILE:-}" \
   --env BUN_INSTALL_CACHE_DIR=/cache/bun --env BUN_CONFIG_MAX_HTTP_REQUESTS=16 \
   --env "npm_config_registry=${NPM_REGISTRY:-https://registry.npmjs.org}" \
   --env NODE_OPTIONS=--max-old-space-size=2304 --env RAYON_NUM_THREADS=2 \

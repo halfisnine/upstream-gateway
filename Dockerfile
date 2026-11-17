@@ -1,6 +1,11 @@
-FROM golang:1.26.10-bookworm@sha256:5de7c99eb78ca5e515a4c340235d0955ec5964a5071c492c15503d7c267da473 AS test
+ARG GO_REGISTRY=docker.io/library
+FROM ${GO_REGISTRY}/golang:1.26.10-bookworm@sha256:5de7c99eb78ca5e515a4c340235d0955ec5964a5071c492c15503d7c267da473 AS test
 WORKDIR /src
 ENV GOTOOLCHAIN=local GOWORK=off GOFLAGS=-mod=readonly
+ARG GOPROXY=https://proxy.golang.org,direct
+ENV GOPROXY=${GOPROXY}
+COPY go.mod go.sum ./
+RUN go mod download && go mod verify
 COPY . .
 RUN test -z "$(gofmt -l cmd internal)" && go vet ./... && CGO_ENABLED=1 go test -race -count=1 ./...
 

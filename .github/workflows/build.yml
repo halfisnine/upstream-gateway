@@ -46,6 +46,12 @@ jobs:
           fi
           printf 'value=%s\n' "$version" >> "$GITHUB_OUTPUT"
 
+      - name: Build test image
+        run: docker build --platform linux/amd64 --target test -t upstream-gateway-tests .
+
+      - name: Test immutable versions and multi-node sync with PostgreSQL
+        run: sh scripts/test-database.sh upstream-gateway-tests
+
       - name: Test and build Linux amd64 image
         env:
           VERSION: ${{ steps.version.outputs.value }}
@@ -90,5 +96,5 @@ jobs:
             printf -- '- Version: `%s:%s`\n' "$IMAGE" "$VERSION"
             printf -- '- Commit: `%s`\n' "$GITHUB_SHA"
             printf -- '- Deploy reference: `%s@%s`\n' "$IMAGE" "$digest"
-            printf '\nBootstrap only: model forwarding is not implemented.\n'
+            printf '\nCandidate gateway: real upstream and New API billing acceptance are required before production use.\n'
           } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,357 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>上游网关 · 运维控制台</title>
+    <link rel="stylesheet" href="/style.css" />
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="topbar-inner">
+        <div class="brand">
+          <span class="mark" aria-hidden="true">↗</span
+          ><strong>上游网关</strong
+          ><span class="brand-subtitle">运维控制台</span>
+        </div>
+        <div class="session">
+          <span id="connection" class="connection" hidden>等待刷新</span
+          ><button id="logout" class="quiet" hidden>
+            <span aria-hidden="true">↪</span> 退出登录
+          </button>
+        </div>
+      </div>
+    </header>
+    <main>
+      <section id="login" class="login">
+        <div class="login-brand">
+          <span class="mark" aria-hidden="true">↗</span
+          ><span>GATEWAY OPERATIONS</span>
+        </div>
+        <div class="login-card panel">
+          <div class="login-heading">
+            <span class="eyebrow">运维访问</span>
+            <h1>登录控制台</h1>
+            <p class="muted">管理上游渠道，发布配置，确认节点同步。</p>
+          </div>
+          <form id="login-form">
+            <label for="admin-token">管理员令牌</label>
+            <div class="token-input">
+              <input
+                id="admin-token"
+                type="password"
+                autocomplete="off"
+                required
+                placeholder="输入管理员访问令牌"
+              /><button
+                id="toggle-token"
+                class="quiet"
+                type="button"
+                aria-label="显示令牌"
+                aria-pressed="false"
+              >
+                显示
+              </button>
+            </div>
+            <p id="login-error" class="form-error" role="alert" hidden></p>
+            <button id="login-submit" type="submit">
+              进入控制台 <span aria-hidden="true">→</span>
+            </button>
+          </form>
+          <p class="login-help">
+            令牌仅保留在当前页面内存中，刷新后需重新登录。
+          </p>
+        </div>
+        <p class="login-caption">上游 Key 在 New API 中配置，由请求携带。</p>
+      </section>
+      <div id="notice" role="status" aria-live="polite" hidden></div>
+      <div id="workspace" hidden>
+        <h1 class="sr-only">网关运维控制台</h1>
+        <section class="metric-strip panel" aria-label="网关运行概览">
+          <div class="metrics">
+            <div class="metric">
+              <span>最新发布</span
+              ><strong id="latest" class="version-tag">—</strong>
+            </div>
+            <div class="metric">
+              <span>已同步节点</span
+              ><strong id="synced" class="badge">—</strong>
+            </div>
+            <div class="metric">
+              <span>编辑基线</span
+              ><strong id="baseline" class="baseline-tag">—</strong>
+            </div>
+            <div class="metric traffic">
+              <span>在线节点在途请求</span><strong id="inflight">—</strong>
+            </div>
+          </div>
+          <div class="refresh-actions">
+            <span id="last-check" class="muted mono small">尚未刷新</span
+            ><button id="refresh" class="secondary" aria-label="刷新状态">
+              <span aria-hidden="true">↻</span> 刷新状态
+            </button>
+          </div>
+        </section>
+        <nav aria-label="控制台导航">
+          <div class="tabs">
+            <button class="tab active" data-tab="channels" aria-current="page">
+              <span aria-hidden="true">ϟ</span> 渠道配置
+              <span id="channel-tab-count" class="tab-count">0</span>
+            </button>
+            <button class="tab" data-tab="nodes">
+              <span aria-hidden="true">▤</span> 节点状态
+              <span id="node-tab-count" class="tab-count">—</span>
+            </button>
+            <button class="tab" data-tab="history">
+              <span aria-hidden="true">◷</span> 版本历史
+              <span id="history-tab-version" class="tab-count">—</span>
+            </button>
+          </div>
+          <p class="nav-hint">
+            先发布网关配置，确认节点生效后，再在 New API 启用渠道
+          </p>
+        </nav>
+        <section id="channels" class="tab-panel" aria-label="渠道配置">
+          <div id="migration-notice" class="callout" hidden>
+            此配置来自旧版本。旧凭证字段已移除，请确认 New API 已填写真实上游
+            Key，然后发布配置。旧历史不会被覆盖。
+          </div>
+          <div class="callout">
+            <strong>过滤范围提示：</strong>当前只隔离非成功 HTTP 错误。HTTP 200
+            正文和 SSE 内嵌错误尚未过滤；Sub2API / kiro2cc
+            等特殊响应需按实际版本验收。
+          </div>
+          <div class="channel-toolbar panel">
+            <div class="filters">
+              <label class="search-field"
+                ><span class="sr-only">搜索渠道</span
+                ><span class="search-icon" aria-hidden="true">⌕</span
+                ><input
+                  id="channel-search"
+                  type="search"
+                  placeholder="搜索名称、标识或上游地址"
+                  autocomplete="off"
+              /></label>
+              <select id="protocol-filter" aria-label="按协议筛选">
+                <option value="">全部协议</option>
+                <option value="openai_chat">Chat</option>
+                <option value="openai_responses">Responses</option>
+                <option value="anthropic_messages">Messages</option>
+                <option value="gemini">Gemini</option>
+              </select>
+              <select id="state-filter" aria-label="按配置状态筛选">
+                <option value="">全部配置状态</option>
+                <option value="已发布">已发布</option>
+                <option value="新增待发布">新增待发布</option>
+                <option value="修改待发布">修改待发布</option>
+              </select>
+              <span
+                id="channel-count"
+                class="muted small"
+                aria-live="polite"
+              ></span>
+            </div>
+            <button id="add-channel">＋ 新增渠道</button>
+          </div>
+          <div class="panel channel-browser">
+            <div id="channel-table-wrap" class="table-wrap channel-table-wrap">
+              <table class="channel-table" aria-label="渠道列表">
+                <thead>
+                  <tr>
+                    <th scope="col">渠道名称 / 路由前缀</th>
+                    <th scope="col">
+                      上游基础地址 <span class="muted">(Upstream URL)</span>
+                    </th>
+                    <th scope="col">支持协议</th>
+                    <th scope="col">配置状态</th>
+                    <th scope="col">操作</th>
+                  </tr>
+                </thead>
+                <tbody id="channel-list"></tbody>
+              </table>
+            </div>
+            <div id="empty-channels" class="empty" hidden></div>
+            <div id="channel-pagination" class="channel-pagination">
+              <label
+                >每页<select id="channel-page-size">
+                  <option value="10">10 条</option>
+                  <option value="20">20 条</option>
+                  <option value="50">50 条</option>
+                </select></label
+              >
+              <div>
+                <button id="channel-prev" class="quiet" type="button">
+                  上一页</button
+                ><span
+                  id="channel-page"
+                  class="muted small"
+                  aria-live="polite"
+                ></span
+                ><button id="channel-next" class="quiet" type="button">
+                  下一页
+                </button>
+              </div>
+            </div>
+          </div>
+        </section>
+        <section id="nodes" class="tab-panel" aria-label="节点状态" hidden>
+          <div class="section-note">
+            <span>每 5 秒刷新 · 新请求使用生效版本，已有流式请求继续完成</span
+            ><span id="node-summary" class="mono">等待状态</span>
+          </div>
+          <div class="panel table-wrap">
+            <table aria-label="节点同步状态">
+              <thead>
+                <tr>
+                  <th>节点标识</th>
+                  <th>状态</th>
+                  <th>目标 / 生效版本</th>
+                  <th>最后心跳</th>
+                  <th>在途请求</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody id="node-list"></tbody>
+            </table>
+            <p id="node-empty" class="empty" hidden>尚无节点报告状态。</p>
+          </div>
+        </section>
+        <section id="history" class="tab-panel" aria-label="版本历史" hidden>
+          <div class="section-note">
+            <span
+              >完整配置发布历史 · 历史不可修改，恢复会发布为新的递增版本</span
+            ><span id="history-count" class="mono"></span>
+          </div>
+          <div class="panel table-wrap">
+            <table aria-label="配置版本历史">
+              <thead>
+                <tr>
+                  <th>版本号</th>
+                  <th>配置摘要</th>
+                  <th>发布说明</th>
+                  <th>发布时间</th>
+                  <th>状态</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody id="history-list"></tbody>
+            </table>
+            <p id="history-empty" class="empty" hidden>暂无发布记录。</p>
+          </div>
+          <button id="more-history" class="secondary" hidden>
+            加载更早版本
+          </button>
+        </section>
+        <p class="page-caption">
+          独立上游网关 · 不自动重试 · 不自动续写 ·
+          真实供应商与计费兼容需独立验收
+        </p>
+        <section id="publish-dock" class="publish-dock" aria-label="配置发布">
+          <div class="publish-inner">
+            <div class="publish-info">
+              <span id="draft-indicator" class="dot" aria-hidden="true"></span
+              ><span id="draft-state">当前配置没有未发布修改。</span
+              ><label class="release-note"
+                ><span class="sr-only">发布说明</span
+                ><input
+                  id="publish-note"
+                  maxlength="500"
+                  placeholder="输入本次发布说明，例如：启用 Chat 和 Messages"
+              /></label>
+            </div>
+            <div class="publish-actions">
+              <button id="reload-config" class="secondary">
+                重新加载最新配置</button
+              ><button id="publish">发布完整配置</button>
+            </div>
+          </div>
+        </section>
+      </div>
+      <dialog id="channel-editor" class="drawer" aria-labelledby="editor-title">
+        <form id="channel-editor-form">
+          <div class="drawer-header">
+            <div>
+              <span class="eyebrow" id="editor-route">渠道设置</span>
+              <h2 id="editor-title">编辑渠道</h2>
+            </div>
+            <button
+              id="close-editor"
+              class="quiet"
+              type="button"
+              aria-label="关闭渠道编辑"
+            >
+              ✕
+            </button>
+          </div>
+          <div class="drawer-body">
+            <div class="callout editor-help">
+              <strong>保存到草稿后，仍需发布完整配置才会生效。</strong
+              ><br />上游 Key 请在 New API 中填写，由请求携带。
+            </div>
+            <div id="editor-error" class="form-error" role="alert" hidden></div>
+            <div id="editor-fields" class="grid"></div>
+            <div id="editor-http" class="checks"></div>
+            <h3>支持的协议 <span class="muted small">Protocols</span></h3>
+            <div id="editor-protocol-options" class="protocol-options"></div>
+            <h3>
+              协议覆盖设置 <span class="muted small">Optional Overrides</span>
+            </h3>
+            <div id="editor-protocol-details"></div>
+          </div>
+          <div class="drawer-actions">
+            <span class="muted small">保存仅更新当前页面草稿</span
+            ><button id="cancel-editor" class="secondary" type="button">
+              取消</button
+            ><button id="save-channel" type="submit">保存到草稿</button>
+          </div>
+        </form>
+      </dialog>
+      <dialog id="details" class="details-modal" aria-labelledby="detail-title">
+        <div class="modal-header">
+          <div>
+            <span class="eyebrow" id="detail-kind">配置快照</span>
+            <h2 id="detail-title">版本内容</h2>
+          </div>
+          <button id="close-details" class="quiet" aria-label="关闭配置详情">
+            ✕
+          </button>
+        </div>
+        <div class="modal-body">
+          <p id="detail-meta" class="muted mono small"></p>
+          <p class="detail-note">
+            配置仅包含路由和协议设置；旧版本的凭证字段不显示，也不会在恢复时写入新版本。
+          </p>
+          <div class="json-heading">
+            <span class="mono">CONFIGURATION · JSON</span>
+            <div class="json-actions">
+              <button id="expand-json" class="quiet" type="button">
+                全部展开</button
+              ><button id="collapse-json" class="quiet" type="button">
+                全部折叠</button
+              ><button id="copy-details" class="quiet" type="button">
+                复制 JSON
+              </button>
+            </div>
+          </div>
+          <div
+            id="detail-content"
+            class="json-tree"
+            role="region"
+            aria-label="可折叠配置 JSON"
+          ></div>
+          <p id="detail-feedback" class="small" role="status" hidden></p>
+          <div id="detail-diff" hidden>
+            <h3>与当前草稿的差异</h3>
+            <pre id="diff-content"></pre>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button id="compare-details" class="secondary">对比当前草稿</button
+          ><button id="export-details" class="secondary">导出配置 JSON</button
+          ><button id="restore-details">恢复并发布新版本</button>
+        </div>
+      </dialog>
+    </main>
+  </body>
+</html>

@@ -45,6 +45,6 @@ Go 依赖代理默认 goproxy.cn，可单次设置 GOPROXY；不关闭 TLS 或�
 先读项目 AGENTS.md 和所修改子目录规范，再读本说明和现有发布工作流。
 reference/ 保存 2026-11-16 接手时的非敏感背景快照；后续设计变更应明确记录和同步，不能把计划当现状。
 
-网关当前只有版本输出、健康接口和正常退出能力，readyz 固定 503，不能处理真实模型流量。
+2026-11-16/17 开发扩展了运维页面、数据库全量版本、节点热更新与协议转发；现行设计见 ../docs/design-v2.md，操作见 ../docs/operations.md。无数据库配置时仍为 bootstrap，readyz 为 503。真实模型、New API 计费和生产容量尚未验收。
 必读 reference/upstream-gateway-design.md；不得默认实现自动重试、续写或新增有费用请求。
 按变更执行竞争检测、go vet 与已有容器启动检查；完整构建与镜像检查见根 README.md。

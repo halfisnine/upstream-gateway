@@ -11,7 +11,7 @@
 
 - This is an independent Go gateway, not a fork of New API.
 - Go is pinned to 1.26.10; use the digest-pinned Dockerfile. Do not follow latest.
-- Current scope is a publishing bootstrap, not a working model proxy. Keep this explicit.
+- Current scope includes the development console, versioned PostgreSQL configuration, hot reload, and protocol forwarding per docs/design-v2.md. It is not production-validated; preserve the documented limits.
 - Do not implement automatic model retries, continuations, or fallback requests.
 - Never commit credentials, production data, local tool authentication, or upstream keys.
 - Run `go test -race ./...`, `go vet ./...`, and the container smoke check for relevant changes.
