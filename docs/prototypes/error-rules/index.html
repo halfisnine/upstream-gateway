@@ -1,0 +1,590 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>错误规则与拦截日志 · 静态设计预览</title>
+    <link rel="stylesheet" href="style.css" />
+    <script src="app.js" defer></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="mark">↗</span><strong>上游网关</strong
+        ><span class="muted brand-subtitle">运维控制台</span>
+      </div>
+      <div class="preview-label">
+        <span class="dot"></span> 静态设计预览
+        <span class="separator">/</span> 模拟数据
+      </div>
+    </header>
+    <main>
+      <div class="intro">
+        <div>
+          <div class="eyebrow">GATEWAY OPERATIONS</div>
+          <h1>错误处理</h1>
+          <p class="muted">统一配置上游错误的处理方式，追踪每一次拦截。</p>
+        </div>
+        <button class="secondary" id="reset-demo">↻ 重置演示</button>
+      </div>
+      <section class="overview panel" aria-label="配置状态">
+        <div>
+          <span class="muted">最新发布</span
+          ><strong class="version" id="version">V12</strong>
+        </div>
+        <div>
+          <span class="muted">节点同步</span
+          ><strong class="green" id="sync-state">2 / 2 已同步</strong>
+        </div>
+        <div>
+          <span class="muted">配置草稿</span
+          ><strong id="draft-state">与已发布一致</strong>
+        </div>
+        <p>规则随完整配置发布 · 约 5 秒同步</p>
+        <button id="publish" disabled>预览发布</button>
+      </section>
+      <nav class="tabs" aria-label="错误处理导航">
+        <button class="tab active" data-page="rules" aria-current="page">
+          错误规则 <span id="rule-count" class="count">4</span></button
+        ><button class="tab" data-page="logs">拦截日志</button
+        ><span class="nav-note">本页面不连接网关；刷新后恢复示例。</span>
+      </nav>
+
+      <section id="rules-page">
+        <div class="section-heading">
+          <div>
+            <h2>拦截规则</h2>
+            <p class="muted">
+              先匹配渠道专用规则，再匹配公共规则；各组内从上到下，首次命中即停止。
+            </p>
+          </div>
+          <div class="actions">
+            <button class="secondary" id="presets">从预设添加</button
+            ><button id="new-rule">＋ 自定义规则</button>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="toolbar">
+            <input
+              type="search"
+              id="rule-search"
+              placeholder="搜索规则名称、关键词"
+              aria-label="搜索规则"
+            /><select id="rule-state" aria-label="规则启用状态">
+              <option value="">全部状态</option>
+              <option value="enabled">已启用</option>
+              <option value="disabled">已停用</option></select
+            ><span class="muted" id="rule-summary"></span>
+          </div>
+          <div class="table-wrap">
+            <table class="rules-table">
+              <thead>
+                <tr>
+                  <th class="order-col">顺序</th>
+                  <th>规则 / 匹配条件</th>
+                  <th>适用范围</th>
+                  <th>上游 HTTP</th>
+                  <th>返回 HTTP</th>
+                  <th>启用</th>
+                  <th class="align-right">操作</th>
+                </tr>
+              </thead>
+              <tbody id="rules-body"></tbody>
+            </table>
+          </div>
+          <div class="fallback">
+            <span class="shield">✓</span>
+            <div>
+              <strong
+                >通用安全兜底
+                <span class="badge neutral">始终生效</span></strong
+              >
+              <p>
+                未命中规则的非 200 响应，以及已识别的 JSON / SSE
+                错误，统一替换为安全错误文案。
+              </p>
+            </div>
+            <span class="muted">不返回上游原文</span>
+          </div>
+        </div>
+        <div class="bottom-note">
+          <span>ⓘ</span>
+          <p>
+            只匹配已识别的错误，不扫描模型正常回答。SSE 已开始输出时，无法修改
+            HTTP 状态码，只发送安全错误事件并结束流。
+          </p>
+        </div>
+        <details class="help">
+          <summary>查看规则生效与日志记录方式</summary>
+          <div class="help-grid">
+            <div>
+              <strong>保存到草稿 → 发布完整版本</strong>
+              <p>
+                新增、修改、停用、删除和顺序调整都需要发布。新请求使用新规则，正在进行的请求继续使用原版本。
+              </p>
+            </div>
+            <div>
+              <strong>一次拦截，一条记录</strong>
+              <p>
+                记录命中规则、配置版本与状态。原始错误片段加密保存，最多 2
+                KiB，供管理员排查误拦。
+              </p>
+            </div>
+          </div>
+        </details>
+      </section>
+
+      <section id="logs-page" hidden>
+        <div class="section-heading">
+          <div>
+            <h2>拦截日志</h2>
+            <p class="muted">
+              查看已写入的拦截记录；HTTP 200 的流内错误同样会被记录。
+            </p>
+          </div>
+          <div class="actions">
+            <button class="secondary" id="resources">记录策略</button
+            ><button class="secondary" id="refresh-logs">↻ 刷新记录</button>
+          </div>
+        </div>
+        <div class="log-health panel">
+          <div>
+            <span class="status-dot"></span
+            ><strong id="health-title">日志写入正常</strong
+            ><span class="muted" id="health-description"
+              >最后成功写入：1 秒前</span
+            >
+          </div>
+          <div class="health-numbers">
+            <span>待写 <b id="pending-count">0</b></span
+            ><span>丢弃 <b id="drop-count">0</b></span
+            ><span>节点 <b>2 / 2</b></span>
+          </div>
+        </div>
+        <div id="degraded-banner" class="callout warning" hidden>
+          <strong>部分日志未记录，查询结果可能不完整。</strong
+          ><span
+            >节点 gateway-b 写入异常，队列已满，当前进程累计丢弃 128
+            条。网关仍执行拦截；页面保留最后已知状态。</span
+          >
+        </div>
+        <div class="panel">
+          <div class="toolbar log-filters">
+            <input
+              id="log-search"
+              type="search"
+              placeholder="搜索请求编号或规则"
+              aria-label="搜索拦截日志"
+            /><select id="log-channel" aria-label="日志渠道">
+              <option value="">全部渠道</option>
+              <option>Vendor A</option>
+              <option>Sub2API</option>
+              <option>Kiro2CC</option></select
+            ><select id="log-status" aria-label="日志返回状态">
+              <option value="">全部实际状态</option>
+              <option value="503">503</option>
+              <option value="429">429</option>
+              <option value="502">502</option>
+              <option value="200">200 · 流内错误</option></select
+            ><select id="log-node" aria-label="日志节点">
+              <option value="">全部节点</option>
+              <option>gateway-a</option>
+              <option>gateway-b</option></select
+            ><select id="log-time" aria-label="日志时间范围">
+              <option value="24">最近 24 小时</option>
+              <option value="1">最近 1 小时</option>
+              <option value="72">最近 3 天</option>
+            </select>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>发生时间 / 请求编号</th>
+                  <th>渠道 / 协议</th>
+                  <th>命中规则</th>
+                  <th>上游 → 实际返回</th>
+                  <th>节点 / 版本</th>
+                  <th class="align-right">操作</th>
+                </tr>
+              </thead>
+              <tbody id="logs-body"></tbody>
+            </table>
+          </div>
+          <div class="table-footer">
+            <span id="log-count"></span
+            ><span>仅展示拦截记录 · 不记录成功请求</span>
+          </div>
+        </div>
+        <div class="demo-switch">
+          <span class="badge neutral">设计演示</span
+          ><label
+            ><input type="checkbox" id="degrade" /> 查看队列已满时的页面</label
+          ><span class="muted">只切换示例状态，不会触发故障。</span>
+        </div>
+      </section>
+      <footer>
+        <span>上游网关 / 错误处理设计预览</span
+        ><span>所有示例均为虚构 · 不执行发布、不调用上游</span>
+      </footer>
+    </main>
+
+    <dialog id="editor" class="drawer" aria-labelledby="editor-title">
+      <form id="rule-form">
+        <header class="drawer-header">
+          <div>
+            <span class="eyebrow">ERROR RULE</span>
+            <h2 id="editor-title">编辑规则</h2>
+          </div>
+          <button
+            type="button"
+            class="icon secondary close"
+            aria-label="关闭规则编辑"
+          >
+            ×
+          </button>
+        </header>
+        <div class="drawer-body">
+          <div class="editor-tabs">
+            <button type="button" class="active" data-editor-tab="configure">
+              规则配置</button
+            ><button type="button" data-editor-tab="test">样本试匹配</button
+            ><span class="badge neutral">未发布草稿</span>
+          </div>
+          <div id="configure-pane">
+            <section class="form-section">
+              <h3><span class="step">1</span> 基本信息</h3>
+              <label
+                >规则名称<input
+                  id="edit-name"
+                  required
+                  maxlength="60"
+                  placeholder="例如：上游余额不足"
+              /></label>
+              <div class="form-grid">
+                <label
+                  >适用渠道<select id="edit-scope">
+                    <option value="all">全部渠道（公共规则）</option>
+                    <option value="selected">指定渠道（优先于公共规则）</option>
+                  </select></label
+                ><label
+                  >协议<select id="edit-protocol">
+                    <option value="all">全部协议</option>
+                    <option>OpenAI Chat</option>
+                    <option>Responses</option>
+                    <option>Anthropic Messages</option>
+                    <option>Gemini</option>
+                  </select></label
+                >
+              </div>
+              <div id="channel-options" class="checkboxes" hidden>
+                <label
+                  ><input
+                    type="checkbox"
+                    name="channel"
+                    value="Vendor A"
+                  />Vendor A</label
+                ><label
+                  ><input
+                    type="checkbox"
+                    name="channel"
+                    value="Sub2API"
+                  />Sub2API</label
+                ><label
+                  ><input
+                    type="checkbox"
+                    name="channel"
+                    value="Kiro2CC"
+                  />Kiro2CC</label
+                >
+              </div>
+            </section>
+            <section class="form-section">
+              <h3><span class="step">2</span> 什么情况下拦截</h3>
+              <label>错误来源</label>
+              <div class="checkboxes">
+                <label
+                  ><input type="checkbox" name="source" value="HTTP" />HTTP
+                  错误</label
+                ><label
+                  ><input type="checkbox" name="source" value="JSON" />200 JSON
+                  错误</label
+                ><label
+                  ><input type="checkbox" name="source" value="SSE" />SSE
+                  错误事件</label
+                >
+              </div>
+              <label
+                >匹配上游 HTTP 状态<input
+                  id="edit-status"
+                  placeholder="例如：402, 403, 429 或 400-499"
+                  maxlength="120"
+              /></label>
+              <p class="field-help">
+                留空表示所有已识别错误。填写 200 也不会拦截普通成功回答。
+              </p>
+              <details id="conditions" open>
+                <summary>
+                  内容条件
+                  <span class="muted">· 可选，条件组之间满足任一即可</span>
+                </summary>
+                <div class="condition-card">
+                  <div class="condition-heading">
+                    <span class="badge neutral">条件组 A</span
+                    ><strong>错误代码等于任一值</strong>
+                  </div>
+                  <label class="sr-only" for="edit-codes">错误代码</label
+                  ><input
+                    id="edit-codes"
+                    placeholder="insufficient_quota, insufficient_balance"
+                    maxlength="300"
+                  />
+                </div>
+                <div class="or-divider">或者 OR</div>
+                <div class="condition-card">
+                  <div class="condition-heading">
+                    <span class="badge neutral">条件组 B</span
+                    ><strong>错误消息包含任一关键词</strong>
+                  </div>
+                  <label class="sr-only" for="edit-keywords">错误关键词</label
+                  ><textarea
+                    id="edit-keywords"
+                    rows="3"
+                    placeholder="每行一个关键词"
+                    maxlength="1000"
+                  ></textarea
+                  ><label class="inline-check"
+                    ><input
+                      id="edit-ignore-case"
+                      type="checkbox"
+                    />忽略英文大小写</label
+                  >
+                </div>
+                <p class="field-help">
+                  两个条件组都留空时，仅按渠道、协议、来源和状态匹配。
+                </p>
+              </details>
+            </section>
+            <section class="form-section">
+              <h3><span class="step">3</span> 命中后如何返回</h3>
+              <div class="form-grid">
+                <label
+                  >返回 HTTP 状态<select id="edit-action">
+                    <option value="preserve">保留原错误状态</option>
+                    <option value="override">指定错误状态</option>
+                  </select></label
+                ><label
+                  >指定状态码<input
+                    id="edit-return"
+                    type="number"
+                    min="400"
+                    max="599"
+                    step="1"
+                    value="503"
+                /></label>
+              </div>
+              <label
+                >对外公开文案<textarea
+                  id="edit-message"
+                  rows="2"
+                  required
+                  maxlength="300"
+                ></textarea>
+              </label>
+              <div class="callout subtle">
+                返回固定文案，不拼接上游原文。SSE 已输出时保持已提交的 HTTP
+                状态，发送安全错误事件并结束。
+              </div>
+            </section>
+            <label class="inline-check"
+              ><input
+                id="edit-enabled"
+                type="checkbox"
+              />发布后启用此规则</label
+            >
+          </div>
+          <div id="test-pane" hidden>
+            <div class="callout subtle">
+              使用当前表单配置进行本地演示，不调用上游。这里演示已提取的错误字段；实际协议解析需后续实现。
+            </div>
+            <div class="form-grid">
+              <label
+                >示例场景<select id="sample-preset">
+                  <option value="balance">余额不足</option>
+                  <option value="sse">SSE 中途报错</option>
+                  <option value="normal">正常回答提到余额不足</option>
+                </select></label
+              ><label
+                >上游 HTTP 状态<input
+                  id="sample-status"
+                  type="number"
+                  value="402"
+                  min="100"
+                  max="599" /></label
+              ><label
+                >渠道<select id="sample-channel">
+                  <option>Vendor A</option>
+                  <option>Sub2API</option>
+                  <option>Kiro2CC</option>
+                </select></label
+              ><label
+                >协议<select id="sample-protocol">
+                  <option>OpenAI Chat</option>
+                  <option>Responses</option>
+                  <option>Anthropic Messages</option>
+                  <option>Gemini</option>
+                </select></label
+              >
+            </div>
+            <label
+              >识别结果<select id="sample-source">
+                <option value="HTTP">HTTP 错误</option>
+                <option value="JSON">已识别的 JSON 错误</option>
+                <option value="SSE">已识别的 SSE 错误</option>
+                <option value="normal">正常模型回答</option>
+              </select></label
+            ><label
+              >错误代码<input
+                id="sample-code"
+                value="insufficient_quota"
+                maxlength="300" /></label
+            ><label
+              >错误消息 / 正常回答<textarea
+                id="sample-message"
+                rows="4"
+                maxlength="2000"
+              >
+Your credit balance is too low.</textarea
+              ></label
+            ><label class="inline-check"
+              ><input id="sample-committed" type="checkbox" />SSE
+              已开始输出（HTTP 200 已提交）</label
+            ><button id="run-test" type="button">运行试匹配</button>
+            <div
+              id="test-result"
+              class="test-result"
+              hidden
+              aria-live="polite"
+            ></div>
+          </div>
+          <p id="form-error" role="alert" class="error" hidden></p>
+        </div>
+        <footer class="drawer-footer">
+          <span class="muted">保存后需发布才会生效</span>
+          <div class="actions">
+            <button type="button" class="secondary close">取消</button
+            ><button type="submit">保存到草稿</button>
+          </div>
+        </footer>
+      </form>
+    </dialog>
+    <dialog id="preset-dialog" class="modal" aria-labelledby="preset-title">
+      <header class="drawer-header">
+        <div>
+          <span class="eyebrow">RULE PRESETS</span>
+          <h2 id="preset-title">从预设开始</h2>
+        </div>
+        <button class="icon secondary close" aria-label="关闭预设">×</button>
+      </header>
+      <div class="modal-body">
+        <p class="muted">
+          预设会复制为可编辑规则。请用实际脱敏样本确认适用范围。
+        </p>
+        <div id="preset-list" class="preset-list"></div>
+      </div>
+    </dialog>
+    <dialog id="detail-dialog" class="drawer" aria-labelledby="detail-title">
+      <header class="drawer-header">
+        <div>
+          <span class="eyebrow">INTERCEPTION EVENT</span>
+          <h2 id="detail-title">拦截详情</h2>
+        </div>
+        <button class="icon secondary close" aria-label="关闭日志详情">
+          ×
+        </button>
+      </header>
+      <div id="detail-content" class="drawer-body"></div>
+      <footer class="drawer-footer">
+        <span class="muted">历史记录不随规则修改而变化</span
+        ><button class="secondary close">关闭</button>
+      </footer>
+    </dialog>
+    <dialog id="resource-dialog" class="modal" aria-labelledby="resource-title">
+      <header class="drawer-header">
+        <div>
+          <span class="eyebrow">LOGGING POLICY</span>
+          <h2 id="resource-title">记录策略</h2>
+        </div>
+        <button class="icon secondary close" aria-label="关闭记录策略">
+          ×
+        </button>
+      </header>
+      <div class="modal-body">
+        <p class="muted">
+          当前展示建议默认值，后续作为运维资源设置独立管理，不随规则版本回滚。
+        </p>
+        <dl class="definition">
+          <dt>记录范围</dt>
+          <dd>每个被拦截请求最多一条</dd>
+          <dt>后台写入</dt>
+          <dd>每秒最多 1 批 / 每批最多 50 条</dd>
+          <dt>每节点排队上限</dt>
+          <dd>最多 1,024 条，编码载荷最多 1 MiB</dd>
+          <dt>保留目标</dt>
+          <dd>最近 3 天，且最多最近 50,000 条</dd>
+          <dt>清理方式</dt>
+          <dd>定时小批量清理，允许短暂超出目标</dd>
+          <dt>日志故障时</dt>
+          <dd>继续拦截；队列满时丢弃新增明细</dd>
+        </dl>
+        <div class="callout warning">
+          正常容量内逐条记录，不抽样。数据库故障、队列满或进程崩溃时可能丢失明细，页面会显示已知异常。
+        </div>
+      </div>
+      <footer class="drawer-footer">
+        <span class="muted">仅保留受限错误片段，不记录完整请求或会话</span
+        ><button class="secondary close">知道了</button>
+      </footer>
+    </dialog>
+    <dialog id="publish-dialog" class="modal" aria-labelledby="publish-title">
+      <header class="drawer-header">
+        <div>
+          <span class="eyebrow">CONFIGURATION RELEASE</span>
+          <h2 id="publish-title">预览完整配置发布</h2>
+        </div>
+        <button class="icon secondary close" aria-label="关闭发布预览">
+          ×
+        </button>
+      </header>
+      <div class="modal-body">
+        <div id="publish-summary"></div>
+        <div class="callout subtle">
+          真实发布会保存渠道与规则的完整快照。此按钮仅模拟版本与节点同步，不写数据库。
+        </div>
+      </div>
+      <footer class="drawer-footer">
+        <button class="secondary close">返回修改</button
+        ><button id="confirm-publish">模拟发布</button>
+      </footer>
+    </dialog>
+    <dialog id="delete-dialog" class="modal" aria-labelledby="delete-title">
+      <header class="drawer-header">
+        <h2 id="delete-title">从草稿中删除规则？</h2>
+        <button class="icon secondary close" aria-label="关闭删除确认">
+          ×
+        </button>
+      </header>
+      <div class="modal-body">
+        <p id="delete-description"></p>
+        <p class="muted">
+          发布后新请求不再使用这条规则，历史拦截日志仍可查询。
+        </p>
+      </div>
+      <footer class="drawer-footer">
+        <button class="secondary close">取消</button
+        ><button class="danger-solid" id="confirm-delete">删除规则</button>
+      </footer>
+    </dialog>
+    <div id="toast" role="status" aria-live="polite" hidden></div>
+  </body>
+</html>

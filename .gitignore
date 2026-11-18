@@ -6,3 +6,10 @@
 *.key
 /secrets/
 /credentials.md
+
+# Independent development workspace: generated or private files.
+/.cache/
+/build/
+/.dev/private/
+/.dev/.env
+/.dev/.env.*
