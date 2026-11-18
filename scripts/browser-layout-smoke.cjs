@@ -25,7 +25,9 @@ const snapshots = new Map([
 let latest = 1,
   posts = [],
   rollbacks = [],
-  failStatus = false;
+  failStatus = false,
+  rejectAuth = false,
+  failPublish = false;
 const server = http.createServer(async (req, res) => {
   res.setHeader("Cache-Control", "no-store");
   res.setHeader(
@@ -35,7 +37,7 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, "http://localhost");
   if (url.pathname.startsWith("/api/")) {
     res.setHeader("Content-Type", "application/json");
-    if (req.headers.authorization !== "Bearer fixture-admin") {
+    if (rejectAuth || req.headers.authorization !== "Bearer fixture-admin") {
       res.writeHead(401);
       res.end(JSON.stringify({ error: "unauthorized" }));
       return;
@@ -82,7 +84,7 @@ const server = http.createServer(async (req, res) => {
       let raw = "";
       for await (const b of req) raw += b;
       const body = JSON.parse(raw);
-      if (body.base_version !== latest) {
+      if (failPublish || body.base_version !== latest) {
         res.writeHead(409);
         res.end(JSON.stringify({ error: "version_conflict" }));
         return;
@@ -252,9 +254,11 @@ const server = http.createServer(async (req, res) => {
     await page.waitForTimeout(5200);
     assert.ok(await page.getByLabel("渠道标识", { exact: true }).isDisabled());
     await page.getByRole("button", { name: "取消", exact: true }).click();
-    await page
-      .getByRole("button", { name: "发布完整配置", exact: true })
-      .click();
+    await page.screenshot({ path: path.join(output, "pending-changes.png") });
+    await page.locator("#pending-changes").click();
+    await page.locator("#publish-note").fill("调整上游协议配置");
+    await page.screenshot({ path: path.join(output, "publication.png") });
+    await page.locator("#publish").click();
     await page.locator("#baseline").filter({ hasText: /^V2$/ }).waitFor();
     assert.equal(posts.length, 1);
     assert.equal(posts[0].config.channels.length, 36);
@@ -301,6 +305,10 @@ const server = http.createServer(async (req, res) => {
     accept = true;
     await added.getByRole("button", { name: "删除", exact: true }).click();
     assert.equal(await added.count(), 0);
+    assert.equal(
+      await page.locator("#pending-changes").textContent(),
+      "无待发布修改",
+    );
     await page.locator("#state-filter").selectOption("");
     await page.locator("#channel-search").fill("test-001");
     await rows
@@ -344,15 +352,13 @@ const server = http.createServer(async (req, res) => {
       .fill("Esc should cancel");
     await page.keyboard.press("Escape");
     await page.locator("#channel-editor").waitFor({ state: "hidden" });
-    // The fixed publish controls must leave the last row and pagination reachable.
+    // No bottom dock; the pending badge stays reachable while scrolling.
     await page.locator("#channel-pagination").scrollIntoViewIfNeeded();
+    assert.equal(await page.locator("#publish-dock").count(), 0);
     assert.ok(
-      await page.evaluate(
-        () =>
-          document.getElementById("channel-pagination").getBoundingClientRect()
-            .bottom <=
-          document.getElementById("publish-dock").getBoundingClientRect().top,
-      ),
+      await page
+        .locator("#pending-changes")
+        .evaluate((e) => e.getBoundingClientRect().top >= 0),
     );
     await page.setViewportSize({ width: 1440, height: 1050 });
     await page.locator('[data-tab="nodes"]').click();
@@ -436,7 +442,7 @@ const server = http.createServer(async (req, res) => {
     await page.locator("#refresh").click();
     await page.locator("#connection.stale").waitFor();
     assert.match(await page.locator("#node-summary").textContent(), /刷新失败/);
-    failStatus = false;
+    (failStatus = false), (rejectAuth = false), (failPublish = false);
     await page.locator("#refresh").click();
     await page.locator("#connection:not(.stale)").waitFor();
     await page.locator('[data-tab="history"]').click();
@@ -482,9 +488,214 @@ const server = http.createServer(async (req, res) => {
     assert.equal(rollbacks.length, 1);
     assert.equal(rollbacks[0].source_version, 1);
     assert.deepEqual(snapshots.get(3), snapshots.get(1));
+    // Reload restores authentication, never the in-memory draft.
+    assert.equal(
+      await page.evaluate(() =>
+        sessionStorage.getItem("upstream-gateway.admin-token"),
+      ),
+      "fixture-admin",
+    );
+    assert.equal(
+      await page.evaluate(() =>
+        localStorage.getItem("upstream-gateway.admin-token"),
+      ),
+      null,
+    );
+    // Hold both script delivery and authentication to exercise the first paint
+    // and a slow session restore without depending on network timing.
+    let releaseScript, releaseStatus, statusStarted;
+    const scriptGate = new Promise((resolve) => (releaseScript = resolve));
+    const statusGate = new Promise((resolve) => (releaseStatus = resolve));
+    const statusSeen = new Promise((resolve) => (statusStarted = resolve));
+    const scriptRoute = async (route) => {
+      await scriptGate;
+      await route.continue();
+    };
+    const statusRoute = async (route) => {
+      statusStarted();
+      await statusGate;
+      await route.continue();
+    };
+    await page.route("**/app.js", scriptRoute);
+    await page.route("**/api/status", statusRoute);
+    await page.reload({ waitUntil: "commit" });
+    await page.locator("#session-loading").waitFor({ state: "visible" });
+    assert.equal(await page.locator("#login").isVisible(), false);
+    releaseScript();
+    await statusSeen;
+    assert.equal(await page.locator("#session-loading").isVisible(), true);
+    assert.equal(await page.locator("#login").isVisible(), false);
+    releaseStatus();
+    await page.locator("#workspace").waitFor({ state: "visible" });
+    assert.equal(await page.locator("#session-loading").isVisible(), false);
+    await page.unroute("**/app.js", scriptRoute);
+    await page.unroute("**/api/status", statusRoute);
+    await rows.first().waitFor();
+    assert.equal(
+      await page.locator("#pending-changes").textContent(),
+      "无待发布修改",
+    );
+    await edit();
+    await page.getByLabel("渠道名称", { exact: true }).fill("待发布渠道");
+    await save();
+    assert.equal(
+      await page.locator("#pending-changes").textContent(),
+      "待发布 1 项",
+    );
+    await edit();
+    await page.getByLabel("渠道名称", { exact: true }).fill("再次修改同一渠道");
+    await save();
+    assert.equal(
+      await page.locator("#pending-changes").textContent(),
+      "待发布 1 项",
+    );
+    await edit();
+    await page.getByLabel("渠道名称", { exact: true }).fill(channels[0].name);
+    await save();
+    assert.equal(
+      await page.locator("#pending-changes").textContent(),
+      "无待发布修改",
+    );
+    await edit();
+    await page
+      .getByLabel("渠道名称", { exact: true })
+      .fill("<img src=x onerror=alert(1)>");
+    await save();
+    await page.locator("#pending-changes").click();
+    assert.equal(await page.locator("#publish-changes li").count(), 1);
+    assert.equal(await page.locator("#publish-changes img").count(), 0);
+    await page.locator("#publish-note").fill("保留说明的发布测试");
+    await page.locator("#cancel-publish").click();
+    assert.equal(
+      await page.locator("#pending-changes").textContent(),
+      "待发布 1 项",
+    );
+    await page.locator("#pending-changes").click();
+    assert.equal(
+      await page.locator("#publish-note").inputValue(),
+      "保留说明的发布测试",
+    );
+    failPublish = true;
+    await page.locator("#publish").click();
+    await page.locator("#publish-error").waitFor({ state: "visible" });
+    assert.match(
+      await page.locator("#publish-error").textContent(),
+      /其他操作已发布/,
+    );
+    assert.equal(await page.locator("#publish-dialog").isVisible(), true);
+    assert.equal(
+      await page.locator("#publish-note").inputValue(),
+      "保留说明的发布测试",
+    );
+    await page.screenshot({ path: path.join(output, "publish-dialog.png") });
+    await page.setViewportSize({ width: 390, height: 844 });
+    assert.equal(
+      await page
+        .locator("#publish-dialog")
+        .evaluate((e) => e.scrollWidth > e.clientWidth),
+      false,
+    );
+    await page.screenshot({ path: path.join(output, "mobile-publish.png") });
+    await page.setViewportSize({ width: 1440, height: 1050 });
+    failPublish = false;
+    failStatus = true;
+    await page.locator("#publish").click();
+    await page.locator("#publish-dialog").waitFor({ state: "hidden" });
+    assert.equal(await page.locator("#baseline").textContent(), "V4");
+    assert.equal(
+      await page.locator("#pending-changes").textContent(),
+      "无待发布修改",
+    );
+    assert.equal(posts.length, 2);
+    assert.equal(await page.locator("#synced").textContent(), "待确认");
+    assert.equal(posts[1].note, "保留说明的发布测试");
+    // A network/database failure during restore keeps the saved credential.
+    await page.reload();
+    await page.locator("#resume-login").waitFor({ state: "visible" });
+    assert.equal(
+      await page.evaluate(() =>
+        sessionStorage.getItem("upstream-gateway.admin-token"),
+      ),
+      "fixture-admin",
+    );
+    failStatus = false;
+    await page.locator("#resume-login").click();
+    await rows.first().waitFor();
+    await edit();
+    await page
+      .getByLabel("渠道名称", { exact: true })
+      .fill("刷新应该丢弃的草稿");
+    await save();
+    await page.reload();
+    await rows.first().waitFor();
+    assert.equal(
+      await page.locator("#pending-changes").textContent(),
+      "无待发布修改",
+    );
+    assert.ok(!(await rows.first().textContent()).includes("刷新应该丢弃"));
+    // Expired credentials are removed; reauthentication preserves this page's edits.
+    await edit();
+    await page
+      .getByLabel("渠道名称", { exact: true })
+      .fill("重新登录后仍保留的草稿");
+    await save();
+    rejectAuth = true;
+    await page.locator("#refresh").click();
+    await page.locator("#login").waitFor({ state: "visible" });
+    assert.equal(
+      await page.evaluate(() =>
+        sessionStorage.getItem("upstream-gateway.admin-token"),
+      ),
+      null,
+    );
+    rejectAuth = false;
+    await page.locator("#admin-token").fill("fixture-admin");
+    await page.locator("#login-submit").click();
+    await rows.first().waitFor();
+    assert.equal(
+      await page.locator("#pending-changes").textContent(),
+      "待发布 1 项",
+    );
+    assert.ok((await rows.first().textContent()).includes("重新登录后仍保留"));
+    // Another independently opened tab has no stored credential.
+    const fresh = await context.newPage();
+    await fresh.goto(`http://127.0.0.1:${server.address().port}`);
+    assert.equal(
+      await fresh.evaluate(() =>
+        sessionStorage.getItem("upstream-gateway.admin-token"),
+      ),
+      null,
+    );
+    assert.equal(await fresh.locator("#login").isVisible(), true);
+    await fresh.close();
     await page.locator("#logout").click();
     await page.locator("#login").waitFor();
-    assert.equal(await page.locator("#publish-dock").isVisible(), false);
+    assert.equal(
+      await page.evaluate(() =>
+        sessionStorage.getItem("upstream-gateway.admin-token"),
+      ),
+      null,
+    );
+    await page.reload();
+    assert.equal(await page.locator("#workspace").isVisible(), false);
+    // Storage-disabled browsers can still log in, with an explicit fallback message.
+    const blocked = await browser.newContext();
+    await blocked.addInitScript(() => {
+      Storage.prototype.setItem = function () {
+        throw new Error("blocked storage");
+      };
+    });
+    const blockedPage = await blocked.newPage();
+    await blockedPage.goto(`http://127.0.0.1:${server.address().port}`);
+    await blockedPage.locator("#admin-token").fill("fixture-admin");
+    await blockedPage.locator("#login-submit").click();
+    await blockedPage.locator("#workspace").waitFor({ state: "visible" });
+    assert.match(
+      await blockedPage.locator("#notice").textContent(),
+      /禁止会话存储/,
+    );
+    await blocked.close();
+    assert.equal(await page.locator("#pending-changes").isVisible(), false);
     await page.getByRole("button", { name: "进入控制台" }).waitFor();
     assert.deepEqual(externalRequests, []);
     assert.deepEqual(failures, []);
@@ -518,8 +729,14 @@ const server = http.createServer(async (req, res) => {
             "node and history tables",
             "refresh failure status",
             "history diff and restore",
-            "mobile publish dock clearance",
+            "sticky pending badge and no bottom dock",
             "logout and no external requests",
+            "pending counts deduplicate and revert",
+            "publish dialog failure retains edits and note",
+            "published state survives follow-up status failure",
+            "reload restores login but discards draft",
+            "unauthorized clears credential and preserves page draft",
+            "independent tab isolation and unavailable storage fallback",
           ],
           real_config_writes: 0,
         },

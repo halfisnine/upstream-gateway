@@ -72,7 +72,13 @@
     configure = el("div"),
     test = el("div"),
     feedbackNode = el("p", undefined, "form-error");
+  feedbackNode.id = "er-editor-feedback";
   feedbackNode.setAttribute("role", "alert");
+  function editorFeedback(message = "") {
+    feedbackNode.textContent = message;
+    feedbackNode.hidden = !message;
+  }
+  editorFeedback();
   const configureButton = button("规则配置", () => tab(false)),
     testButton = button("样本试匹配", () => tab(true));
   tabs.append(configureButton, testButton);
@@ -187,6 +193,11 @@
           "er-sub",
         ),
       );
+      const pending = pendingChanges().find(
+        (x) => x.kind === "错误规则" && x.id === r.id,
+      );
+      if (pending)
+        name.append(el("span", pending.action + "待发布", "pending-label"));
       const scope = el("td");
       scope.append(
         el(
@@ -334,7 +345,7 @@
         .map((s) => (s.from === s.to ? s.from : `${s.from}-${s.to}`))
         .join(", "),
     };
-    feedbackNode.textContent = "";
+    editorFeedback();
     drawConfigure();
     drawTest();
     tab(false);
@@ -586,6 +597,7 @@
     e.preventDefault();
     if (busy) return;
     save.disabled = true;
+    editorFeedback();
     try {
       const r = prepared();
       const cfg = testConfig(r);
@@ -606,9 +618,9 @@
       editing = null;
       dialog.close();
       update();
-      notice("规则已保存到草稿，请发布完整配置。");
+      draftNotice();
     } catch (e) {
-      feedbackNode.textContent = e.message;
+      editorFeedback(e.message);
     } finally {
       save.disabled = false;
     }

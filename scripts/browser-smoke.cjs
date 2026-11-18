@@ -74,11 +74,14 @@ fs.mkdirSync(output, { recursive: true });
     for (const p of ["OpenAI Responses", "Anthropic Messages", "Gemini"])
       await page.getByLabel(p, { exact: true }).check();
     await page.getByRole("button", { name: "保存到草稿", exact: true }).click();
+    await page.locator("#pending-changes").click();
     await page
       .locator("#publish-note")
       .fill("浏览器验收：单渠道四协议，未连接真实上游");
+    if (!(await page.locator("#publish-dialog").isVisible()))
+      await page.locator("#pending-changes").click();
     await page
-      .getByRole("button", { name: "发布完整配置", exact: true })
+      .getByRole("button", { name: "发布全部修改", exact: true })
       .click();
     await waitVersion(v1);
     await page.evaluate(() => window.scrollTo(0, 0));
@@ -111,8 +114,10 @@ fs.mkdirSync(output, { recursive: true });
       .getByLabel("渠道名称", { exact: true })
       .fill("示例渠道 A · 第二版");
     await page.getByRole("button", { name: "保存到草稿", exact: true }).click();
+    if (!(await page.locator("#publish-dialog").isVisible()))
+      await page.locator("#pending-changes").click();
     await page
-      .getByRole("button", { name: "发布完整配置", exact: true })
+      .getByRole("button", { name: "发布全部修改", exact: true })
       .click();
     await waitVersion(v2);
     await page.locator('[data-tab="history"]').click();
@@ -134,8 +139,10 @@ fs.mkdirSync(output, { recursive: true });
       .locator('#channel-list tr[data-channel-id="demo-a"]')
       .getByRole("button", { name: "删除", exact: true })
       .click();
+    if (!(await page.locator("#publish-dialog").isVisible()))
+      await page.locator("#pending-changes").click();
     await page
-      .getByRole("button", { name: "发布完整配置", exact: true })
+      .getByRole("button", { name: "发布全部修改", exact: true })
       .click();
     await waitVersion(v4);
     await page.setViewportSize({ width: 390, height: 844 });

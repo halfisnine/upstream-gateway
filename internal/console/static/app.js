@@ -1,4 +1,8 @@
 "use strict";
+const SESSION_KEY = "upstream-gateway.admin-token";
+let authEpoch = 0,
+  suspendedDialogs = [],
+  loadedSession = false;
 const $ = (id) => document.getElementById(id);
 const labels = {
   openai_chat: "OpenAI Chat",
@@ -71,36 +75,159 @@ function channelState(ch) {
       ? "已发布"
       : "修改待发布";
 }
-function mark() {
-  const added = draft.channels.filter(
-    (ch) => channelState(ch) === "新增待发布",
-  ).length;
-  const modified = draft.channels.filter(
-    (ch) => channelState(ch) === "修改待发布",
-  ).length;
-  const removed = publishedConfig.channels.filter(
-    (ch) => !draft.channels.some((item) => item.id === ch.id),
-  ).length;
-  const ruleChanged =
-    !equal(draft.error_rules || [], publishedConfig.error_rules || []) ||
-    !!draft.inspect_embedded_errors !==
-      !!publishedConfig.inspect_embedded_errors;
-  const trafficChanged = !equal(
-    trafficLimits(draft),
-    trafficLimits(publishedConfig),
+function pendingChanges() {
+  const changes = [];
+  function objects(oldItems, newItems, kind, orderSensitive = false) {
+    const before = new Map(oldItems.map((x) => [x.id, x]));
+    const after = new Map(newItems.map((x) => [x.id, x]));
+    const oldOrder = oldItems.filter((x) => after.has(x.id)).map((x) => x.id);
+    const newOrder = newItems.filter((x) => before.has(x.id)).map((x) => x.id);
+    for (const item of newItems) {
+      const old = before.get(item.id);
+      if (!old)
+        changes.push({
+          id: item.id,
+          kind,
+          action: "新增",
+          name: item.name || item.id,
+        });
+      else if (
+        !equal(old, item) ||
+        (orderSensitive &&
+          oldOrder.indexOf(item.id) !== newOrder.indexOf(item.id))
+      )
+        changes.push({
+          id: item.id,
+          kind,
+          action: "修改",
+          name: item.name || item.id,
+        });
+    }
+    for (const item of oldItems)
+      if (!after.has(item.id))
+        changes.push({
+          id: item.id,
+          kind,
+          action: "删除",
+          name: item.name || item.id,
+        });
+  }
+  objects(publishedConfig.channels, draft.channels, "渠道");
+  objects(
+    publishedConfig.error_rules || [],
+    draft.error_rules || [],
+    "错误规则",
+    true,
   );
-  dirty =
-    added + modified + removed > 0 ||
-    ruleChanged ||
-    trafficChanged ||
-    !$("traffic-form").checkValidity();
-  $("draft-indicator").classList.toggle("pending", dirty);
+  if (
+    !!draft.inspect_embedded_errors !==
+    !!publishedConfig.inspect_embedded_errors
+  )
+    changes.push({
+      kind: "错误检查",
+      action: "修改",
+      name: draft.inspect_embedded_errors
+        ? "开启 HTTP 200 JSON / SSE 正文检查"
+        : "关闭 HTTP 200 JSON / SSE 正文检查",
+    });
+  if (
+    !equal(trafficLimits(draft), trafficLimits(publishedConfig)) ||
+    !trafficValid()
+  ) {
+    const before = trafficLimits(publishedConfig),
+      after = trafficLimits(draft);
+    changes.push({
+      kind: "并发设置",
+      action: "修改",
+      name: trafficValid()
+        ? `节点 ${before.node_concurrency} → ${after.node_concurrency}，上游 ${before.upstream_concurrency} → ${after.upstream_concurrency}`
+        : "输入无效，请修正并发上限",
+    });
+  }
+  return changes;
+}
+function trafficValid() {
+  const node = Number($("node-concurrency").value),
+    upstream = Number($("upstream-concurrency").value);
+  return (
+    Number.isInteger(node) &&
+    Number.isInteger(upstream) &&
+    node >= 1 &&
+    node <= 8192 &&
+    upstream >= 1 &&
+    upstream <= node
+  );
+}
+function hasUnsavedEdits() {
+  return dirty || editorChanged() || !!window.errorTools?.changed();
+}
+function draftNotice() {
+  notice(
+    `已保存到草稿，尚未发布。当前共 ${pendingChanges().length} 项待发布修改，请点击顶部角标统一发布。`,
+  );
+}
+function mark() {
+  const changes = pendingChanges();
+  dirty = changes.length > 0;
+  $("pending-changes").textContent = dirty
+    ? `待发布 ${changes.length} 项`
+    : "无待发布修改";
+  $("pending-changes").disabled = busy || !dirty;
+  $("publish").disabled = busy || !dirty;
+  $("draft-state").classList.toggle("pending", dirty);
   $("draft-state").textContent = dirty
-    ? `待发布：新增 ${added} · 修改 ${modified} · 删除 ${removed}${ruleChanged ? " · 错误处理有修改" : ""}${trafficChanged ? " · 并发设置有修改" : ""}`
+    ? `当前页面有 ${changes.length} 项修改尚未发布（新增 ${changes.filter((x) => x.action === "新增").length} · 修改 ${changes.filter((x) => x.action === "修改").length} · 删除 ${changes.filter((x) => x.action === "删除").length}）。编辑基线 V${base}；点击顶部“待发布”查看并发布。`
     : "当前配置没有未发布修改。";
+  for (const [id, kind] of [
+    ["channel-pending", "渠道"],
+    ["rule-pending", "错误规则"],
+  ]) {
+    const count = changes.filter(
+      (x) => x.kind === kind || (kind === "错误规则" && x.kind === "错误检查"),
+    ).length;
+    $(id).hidden = count === 0;
+    $(id).textContent = `待发布 ${count}`;
+  }
+}
+function storedToken() {
+  try {
+    return sessionStorage.getItem(SESSION_KEY) || "";
+  } catch {
+    return "";
+  }
+}
+function forgetToken() {
+  try {
+    sessionStorage.removeItem(SESSION_KEY);
+  } catch {}
+}
+function rememberToken() {
+  try {
+    sessionStorage.setItem(SESSION_KEY, token);
+    return true;
+  } catch {
+    return false;
+  }
+}
+function expireSession() {
+  $("session-loading").hidden = true;
+  authEpoch++;
+  token = "";
+  forgetToken();
+  clearInterval(timer);
+  suspendedDialogs = [...document.querySelectorAll("dialog[open]")];
+  suspendedDialogs.forEach((d) => d.close());
+  $("workspace").hidden = true;
+  $("login").hidden = false;
+  for (const id of ["logout", "connection", "pending-changes", "resume-login"])
+    $(id).hidden = true;
+  $("login-error").textContent =
+    "登录已失效，请重新登录。当前页面草稿仍保留，尚未发布。";
+  $("login-error").hidden = false;
 }
 async function api(path, method = "GET", body) {
   let response;
+  const requestEpoch = authEpoch;
   try {
     response = await fetch(path, {
       method,
@@ -119,7 +246,13 @@ async function api(path, method = "GET", body) {
         : "未能确认提交结果。请刷新版本历史核对，避免重复发布。",
     );
   }
+  if (requestEpoch !== authEpoch) throw new Error("登录状态已变化，请重试。");
+  if (response.status === 401) {
+    expireSession();
+    throw new Error(errors.unauthorized);
+  }
   const result = await response.json();
+  if (requestEpoch !== authEpoch) throw new Error("登录状态已变化，请重试。");
   if (!response.ok)
     throw new Error(errors[result.error] || "操作失败：" + result.error);
   return result;
@@ -132,9 +265,14 @@ async function action(fn) {
     await fn();
   } catch (e) {
     if ($("workspace").hidden) {
-      token = "";
+      $("session-loading").hidden = true;
+      $("login").hidden = false;
+      $("resume-login").hidden = !storedToken();
       $("login-error").textContent = e.message;
       $("login-error").hidden = false;
+    } else if ($("publish-dialog").open) {
+      $("publish-error").textContent = e.message;
+      $("publish-error").hidden = false;
     } else if ($("details").open) {
       $("detail-feedback").textContent = e.message;
       $("detail-feedback").hidden = false;
@@ -147,6 +285,10 @@ async function action(fn) {
 function setBusy(value) {
   for (const id of [
     "publish",
+    "close-publish",
+    "cancel-publish",
+    "publish-note",
+    "resume-login",
     "reload-config",
     "add-channel",
     "logout",
@@ -161,6 +303,8 @@ function setBusy(value) {
     .forEach((b) => {
       b.disabled = value || b.dataset.current === "true";
     });
+  $("pending-changes").disabled = value || !dirty;
+  $("publish").disabled = value || !dirty;
   $("login-submit").textContent =
     value && !$("login").hidden ? "正在连接…" : "进入控制台";
 }
@@ -551,7 +695,7 @@ $("channel-editor-form").addEventListener("submit", (event) => {
     (row) => row.dataset.channelId === savedID,
   );
   (savedRow?.querySelector(".edit-channel") || $("channel-search")).focus();
-  notice("已保存到草稿。点击“发布完整配置”后才会生效。");
+  draftNotice();
 });
 $("close-editor").addEventListener("click", () => closeEditor());
 $("cancel-editor").addEventListener("click", () => closeEditor());
@@ -622,7 +766,6 @@ async function loadConfig() {
   $("node-concurrency").value = limits.node_concurrency;
   $("upstream-concurrency").value = limits.upstream_concurrency;
   trafficSummary();
-  window.errorTools?.render();
   publishedConfig = structuredClone(draft);
   publishedIDs = new Set(draft.channels.map((ch) => ch.id));
   $("migration-notice").hidden = !v.requires_republish;
@@ -630,15 +773,20 @@ async function loadConfig() {
   $("baseline").textContent = "V" + base;
   mark();
   renderChannels();
+  window.errorTools?.render();
   renderStatus(state);
 }
 function renderStatus(s) {
+  if (s.latest_version < latest) return;
   window.errorTools?.status(s);
   latest = s.latest_version;
   $("latest").textContent = latest ? "V" + latest : "尚未发布";
   const synced = s.nodes.filter(
     (n) => n.online && !n.error && n.applied_version === latest && latest > 0,
   );
+  $("sync-state").textContent = !latest
+    ? "尚未发布首版配置。"
+    : `V${latest} 已发布，${synced.length}/${s.nodes.length} 个已登记节点已生效${synced.length === s.nodes.length && s.nodes.length ? "。" : "，等待其余节点同步或恢复在线。"}`;
   $("synced").textContent = synced.length + " / " + s.nodes.length;
   $("synced").className =
     "badge" +
@@ -884,30 +1032,69 @@ async function history(reset = true) {
   $("history-empty").hidden = count > 0;
   $("history-count").textContent = `已加载 ${count} 个版本`;
 }
+async function enterConsole() {
+  $("login-error").hidden = true;
+  // Reauthentication within the same page preserves unsubmitted edits. A page
+  // reload starts with no draft and loads the latest published configuration.
+  if (loadedSession && hasUnsavedEdits())
+    renderStatus(await api("/api/status"));
+  else await loadConfig();
+  loadedSession = true;
+  const remembered = rememberToken();
+  $("session-loading").hidden = true;
+  $("admin-token").value = "";
+  $("login").hidden = true;
+  $("workspace").hidden = false;
+  for (const id of ["logout", "connection", "pending-changes"])
+    $(id).hidden = false;
+  $("resume-login").hidden = true;
+  $("admin-token").type = "password";
+  $("toggle-token").textContent = "显示";
+  $("toggle-token").setAttribute("aria-label", "显示令牌");
+  $("toggle-token").setAttribute("aria-pressed", "false");
+  $("notice").hidden = true;
+  if (!remembered)
+    notice("浏览器禁止会话存储，本次可正常使用，但刷新后需要重新登录。", true);
+  for (const dialog of suspendedDialogs) dialog.showModal();
+  suspendedDialogs = [];
+  clearInterval(timer);
+  timer = setInterval(refresh, 5000);
+}
 $("login-form").addEventListener("submit", (e) => {
   e.preventDefault();
   action(async () => {
-    $("login-error").hidden = true;
+    authEpoch++;
     token = $("admin-token").value.trim();
-    await loadConfig();
-    $("admin-token").value = "";
-    $("login").hidden = true;
-    $("workspace").hidden = false;
-    $("logout").hidden = false;
-    $("connection").hidden = false;
-    $("admin-token").type = "password";
-    $("toggle-token").textContent = "显示";
-    $("toggle-token").setAttribute("aria-label", "显示令牌");
-    $("toggle-token").setAttribute("aria-pressed", "false");
-    $("notice").hidden = true;
-    clearInterval(timer);
-    timer = setInterval(refresh, 5000);
+    await enterConsole();
   });
 });
+function resumeLogin() {
+  return action(async () => {
+    const saved = storedToken();
+    if (!saved) {
+      $("session-loading").hidden = true;
+      $("login").hidden = false;
+      return;
+    }
+    $("login").hidden = true;
+    $("session-loading").hidden = false;
+    authEpoch++;
+    token = saved;
+    await enterConsole();
+  });
+}
+$("resume-login").addEventListener("click", resumeLogin);
 $("logout").addEventListener("click", () => {
-  if (dirty && !confirm("退出登录将丢弃未发布草稿，确定退出？")) return;
+  if (hasUnsavedEdits() && !confirm("退出登录将丢弃未发布草稿，确定退出？"))
+    return;
+  authEpoch++;
   token = "";
+  forgetToken();
+  loadedSession = false;
+  suspendedDialogs = [];
   window.errorTools?.clear();
+  editor = null;
+  document.querySelectorAll("dialog[open]").forEach((d) => d.close());
   dirty = false;
   publishedIDs.clear();
   detailVersion = null;
@@ -915,17 +1102,20 @@ $("logout").addEventListener("click", () => {
   $("channel-search").value = "";
   $("protocol-filter").value = "";
   $("state-filter").value = "";
-  $("connection").hidden = true;
+  for (const id of ["connection", "pending-changes", "resume-login"])
+    $(id).hidden = true;
   clearInterval(timer);
   draft = { schema_version: 5, channels: [] };
+  publishedConfig = structuredClone(draft);
+  latest = base = 0;
   $("workspace").hidden = true;
   $("login").hidden = false;
   $("logout").hidden = true;
   $("notice").hidden = true;
+  $("login-error").hidden = true;
   $("channel-list").replaceChildren();
   $("history-list").replaceChildren();
   $("detail-content").textContent = "";
-  $("details").close();
   $("admin-token").focus();
 });
 $("toggle-token").addEventListener("click", () => {
@@ -944,38 +1134,71 @@ $("reload-config").addEventListener("click", () =>
     notice("已加载最新配置。");
   }),
 );
-$("publish").addEventListener("click", () => {
-  if (!$("traffic-form").checkValidity()) {
+function openPublish() {
+  if (busy || !dirty) return;
+  if (!trafficValid()) {
     document.querySelector('[data-tab="channels"]').click();
     document.querySelector(".traffic-settings").open = true;
     $("traffic-form").reportValidity();
     notice("请修正并发设置后发布。", true);
     return;
   }
+  const changes = pendingChanges();
+  $("publish-baseline").textContent =
+    `当前编辑基线：V${base}；最新已知发布：V${latest}`;
+  $("publish-summary").textContent =
+    `本次将统一发布以下 ${changes.length} 项修改：`;
+  $("publish-changes").replaceChildren(
+    ...changes.map((change) => {
+      const row = el("li");
+      row.append(
+        el("strong", change.action + change.kind),
+        el("span", change.name),
+      );
+      return row;
+    }),
+  );
+  $("publish-error").hidden = true;
+  $("publish-dialog").showModal();
+}
+$("pending-changes").addEventListener("click", openPublish);
+for (const id of ["close-publish", "cancel-publish"])
+  $(id).addEventListener("click", () => {
+    if (!busy) $("publish-dialog").close();
+  });
+$("publish-dialog").addEventListener("cancel", (e) => {
+  if (busy) e.preventDefault();
+});
+$("publish-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  if (busy || !dirty || !trafficValid()) return;
   return action(async () => {
-    if (
-      !confirm(
-        "发布当前全部 " +
-          draft.channels.length +
-          " 个渠道及 " +
-          (draft.error_rules || []).length +
-          " 条错误规则，以及并发上限（每节点 " +
-          trafficLimits(draft).node_concurrency +
-          " / 每上游 " +
-          trafficLimits(draft).upstream_concurrency +
-          "）的完整配置？各节点将在检查到更新后生效。",
-      )
-    )
-      return;
+    $("publish-error").hidden = true;
+    const submitted = structuredClone(draft);
     const v = await api("/api/publish", "POST", {
       base_version: base,
       note: $("publish-note").value,
-      config: draft,
+      config: submitted,
     });
-    await loadConfig();
-    if (!$("history").hidden) await history();
+    // Commit the acknowledged version locally before any follow-up GET. A
+    // status refresh failure must not leave a successful publication retryable.
+    base = latest = v.id;
+    publishedConfig = structuredClone(submitted);
+    publishedIDs = new Set(submitted.channels.map((ch) => ch.id));
+    $("baseline").textContent = "V" + base;
+    $("latest").textContent = "V" + latest;
+    $("synced").textContent = "待确认";
+    $("synced").className = "badge warn";
+    $("node-tab-count").textContent = "—";
+    $("migration-notice").hidden = true;
+    mark();
+    renderChannels();
+    window.errorTools?.render();
+    $("publish-dialog").close();
     $("publish-note").value = "";
-    notice("V" + v.id + " 发布成功。请查看目标节点是否已生效。");
+    $("sync-state").textContent = `V${v.id} 已发布，正在等待节点同步。`;
+    notice(`V${v.id} 已发布，正在确认节点同步状态。`);
+    await refresh();
   });
 });
 $("more-history").addEventListener("click", () => action(() => history(false)));
@@ -1068,16 +1291,15 @@ $("compare-details").addEventListener("click", () => {
   $("detail-diff").hidden = false;
   $("detail-diff").scrollIntoView({ block: "nearest" });
 });
-// Reserve the actual dock height, including wrapped controls at mobile widths.
-new ResizeObserver(([entry]) => {
-  document.body.style.setProperty(
-    "--dock-height",
-    Math.ceil(entry.target.getBoundingClientRect().height + 16) + "px",
-  );
-}).observe($("publish-dock"));
 setInterval(() => {
   if (token && lastStatusAt && Date.now() - lastStatusAt > 20000) {
     $("connection").textContent = "状态已过期，等待刷新";
     $("connection").classList.add("stale");
   }
 }, 5000);
+
+if (storedToken()) resumeLogin();
+else {
+  $("session-loading").hidden = true;
+  $("login").hidden = false;
+}

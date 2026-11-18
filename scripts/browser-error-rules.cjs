@@ -90,7 +90,7 @@ async function api(url, method = "GET", body) {
       await page.locator("#traffic-form").evaluate((f) => f.checkValidity()),
       false,
     );
-    await page.locator("#publish").click();
+    await page.locator("#pending-changes").click();
     assert.equal(
       (await api(base + "/api/status")).latest_version,
       1,
@@ -99,7 +99,7 @@ async function api(url, method = "GET", body) {
     await page.locator("#upstream-concurrency").fill("48");
     assert.match(
       await page.locator("#draft-state").innerText(),
-      /并发设置有修改/,
+      /1 项修改尚未发布/,
     );
     await page.screenshot({ path: path.join(output, "traffic-settings.png") });
     await page.locator('[data-tab="error-rules"]').click();
@@ -108,6 +108,19 @@ async function api(url, method = "GET", body) {
     await page
       .getByRole("button", { name: "上游余额不足 → 503", exact: true })
       .click();
+    const feedback = page.locator("#er-editor-feedback");
+    assert.equal(await feedback.isVisible(), false);
+    assert.equal(await feedback.textContent(), "");
+    const ruleName = page.getByLabel("规则名称", { exact: true });
+    const originalName = await ruleName.inputValue();
+    await ruleName.fill(" ");
+    await page
+      .locator("#er-editor")
+      .getByRole("button", { name: "保存到草稿", exact: true })
+      .click();
+    await feedback.waitFor({ state: "visible" });
+    assert.match(await feedback.textContent(), /请填写规则名称/);
+    await ruleName.fill(originalName);
     await page.getByRole("button", { name: "样本试匹配", exact: true }).click();
     await page.getByRole("button", { name: "运行试匹配", exact: true }).click();
     await page
@@ -133,12 +146,24 @@ async function api(url, method = "GET", body) {
       .getByRole("button", { name: "保存到草稿", exact: true })
       .click();
     await page.locator("#er-editor").waitFor({ state: "hidden" });
+    assert.equal(await feedback.textContent(), "");
     assert.match(
       await page.locator("#draft-state").innerText(),
-      /错误处理有修改/,
+      /3 项修改尚未发布/,
     );
+    await page.locator("#pending-changes").click();
     await page.locator("#publish").click();
     await page.locator("#latest").filter({ hasText: "V2" }).waitFor();
+    assert.equal(
+      await page.locator("#pending-changes").textContent(),
+      "无待发布修改",
+    );
+    await page.locator("#reload-config").click();
+    await page.locator("#reload-config").waitFor({ state: "visible" });
+    await page.waitForFunction(
+      () => !document.getElementById("reload-config").disabled,
+    );
+    assert.equal(await page.locator("#er-list .pending-label").count(), 0);
     const deadline = Date.now() + 15000;
     let synced = false;
     while (Date.now() < deadline) {
@@ -237,15 +262,18 @@ async function api(url, method = "GET", body) {
       .getByRole("button", { name: "保存到草稿", exact: true })
       .click();
     await page.locator("#er-editor").waitFor({ state: "hidden" });
+    await page.locator("#pending-changes").click();
     await page.locator("#publish").click();
     await page.locator("#latest").filter({ hasText: "V3" }).waitFor();
     await page.locator("#er-list").getByRole("switch").click();
+    await page.locator("#pending-changes").click();
     await page.locator("#publish").click();
     await page.locator("#latest").filter({ hasText: "V4" }).waitFor();
     await page
       .locator("#er-list")
       .getByRole("button", { name: "删除", exact: true })
       .click();
+    await page.locator("#pending-changes").click();
     await page.locator("#publish").click();
     await page.locator("#latest").filter({ hasText: "V5" }).waitFor();
     // Old logs retain the immutable version and rule ID even after deletion.
