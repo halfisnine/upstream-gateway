@@ -7,6 +7,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
 const base = process.env.GATEWAY_RULES_CHECK_ADMIN;
 const data = process.env.GATEWAY_RULES_CHECK_DATA;
 const second = process.env.GATEWAY_RULES_CHECK_SECOND_ADMIN;
+const secondData = process.env.GATEWAY_RULES_CHECK_SECOND_DATA;
 const token = fs
   .readFileSync(process.env.GATEWAY_RULES_CHECK_TOKEN_FILE, "utf8")
   .trim();
@@ -34,7 +35,26 @@ async function api(url, method = "GET", body) {
     0,
     "Refusing nonempty database",
   );
+  let modelCalls = 0;
   const mock = http.createServer((req, res) => {
+    if (req.url.startsWith("/v1/models")) {
+      modelCalls++;
+      assert.equal(req.method, "GET");
+      assert.equal(req.headers.authorization, "Bearer test-placeholder");
+      if (!req.url.includes("fail=1")) {
+        res.writeHead(200, {
+          "Content-Type": "application/json",
+          "X-Model-Catalog": "preserved",
+        });
+        res.end(
+          JSON.stringify({
+            object: "list",
+            data: [{ id: "sample-model", object: "model" }],
+          }),
+        );
+        return;
+      }
+    }
     res.writeHead(403, { "Content-Type": "application/json" });
     res.end(
       JSON.stringify({
@@ -50,7 +70,7 @@ async function api(url, method = "GET", body) {
   await new Promise((resolve) => mock.listen(0, "127.0.0.1", resolve));
   const upstream = "http://127.0.0.1:" + mock.address().port;
   const cfg = {
-    schema_version: 5,
+    schema_version: 6,
     inspect_embedded_errors: false,
     channels: [
       {
@@ -285,6 +305,147 @@ async function api(url, method = "GET", body) {
     assert.match(await page.locator("#er-info").textContent(), /balance/);
     assert.match(await page.locator("#er-info").textContent(), /V2/);
     await page.locator("#er-info .quiet").click();
+    // Configure auxiliary paths through the real UI and publish a complete
+    // snapshot. The fixture upstream never makes any paid model requests.
+    const modelsURL = data + "/r/test-provider/v1/models";
+    const modelHeaders = { Authorization: "Bearer test-placeholder" };
+    assert.equal(
+      (await fetch(modelsURL, { headers: modelHeaders })).status,
+      404,
+    );
+    assert.equal(modelCalls, 0);
+    await page.locator('[data-tab="channels"]').click();
+    await page
+      .locator("#channel-list")
+      .getByRole("button", { name: "编辑", exact: true })
+      .click();
+    await page.locator("#editor-allowlist summary").click();
+    await page.locator("#add-models-path").click();
+    const allowedRow = page.locator(".allowed-path-row").first();
+    assert.equal(
+      await allowedRow.getByLabel("请求方法", { exact: true }).inputValue(),
+      "GET",
+    );
+    await allowedRow
+      .getByLabel("请求方法", { exact: true })
+      .selectOption("HEAD");
+    await allowedRow
+      .getByLabel("请求方法", { exact: true })
+      .selectOption("GET");
+    await allowedRow
+      .getByLabel("使用协议设置", { exact: true })
+      .selectOption("anthropic_messages");
+    await allowedRow
+      .getByLabel("使用协议设置", { exact: true })
+      .selectOption("openai_chat");
+    assert.equal(
+      await allowedRow.getByLabel("完整路径", { exact: true }).inputValue(),
+      "/v1/models",
+    );
+    await allowedRow.getByLabel("完整路径", { exact: true }).fill("/v1/*");
+    await page.locator("#save-channel").click();
+    await page.locator("#editor-error").waitFor({ state: "visible" });
+    assert.match(
+      await page.locator("#editor-error").textContent(),
+      /不含通配符/,
+    );
+    await allowedRow.getByLabel("完整路径", { exact: true }).fill("/v1/models");
+    await page.locator("#add-allowed-path").click();
+    await page
+      .locator(".allowed-path-row")
+      .last()
+      .getByLabel("完整路径", { exact: true })
+      .fill("/v1/models");
+    await page.locator("#save-channel").click();
+    assert.match(await page.locator("#editor-error").textContent(), /重复项/);
+    await page
+      .locator(".allowed-path-row")
+      .last()
+      .getByRole("button", { name: "删除接口" })
+      .click();
+    await page.setViewportSize({ width: 390, height: 844 });
+    assert.equal(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth > innerWidth,
+      ),
+      false,
+    );
+    const drawerSize = await page
+      .locator("#channel-editor .drawer-body")
+      .evaluate((e) => ({ width: e.clientWidth, scroll: e.scrollWidth }));
+    assert(
+      drawerSize.scroll <= drawerSize.width + 1,
+      "allowlist editor horizontal overflow",
+    );
+    await page.screenshot({ path: path.join(output, "allowlist-mobile.png") });
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.screenshot({ path: path.join(output, "allowlist-editor.png") });
+    await page.locator("#save-channel").click();
+    await page.locator("#channel-editor").waitFor({ state: "hidden" });
+    assert.equal(
+      await page.locator("#pending-changes").textContent(),
+      "待发布 1 项",
+    );
+    await page.locator("#pending-changes").click();
+    await page.locator("#publish").click();
+    await page.locator("#latest").filter({ hasText: /^V6$/ }).waitFor();
+    const allowlist = [
+      { method: "GET", path: "/v1/models", protocol: "openai_chat" },
+    ];
+    assert.deepEqual(
+      (await api(base + "/api/versions/6")).config.channels[0].path_allowlist,
+      allowlist,
+    );
+    const syncDeadline = Date.now() + 15000;
+    while (
+      (await api(second + "/api/status")).local.applied_version !== 6 &&
+      Date.now() < syncDeadline
+    )
+      await new Promise((r) => setTimeout(r, 300));
+    assert.equal((await api(second + "/api/status")).local.applied_version, 6);
+    assert.deepEqual(
+      (await api(second + "/api/versions/6")).config.channels[0].path_allowlist,
+      allowlist,
+    );
+    for (const target of [data, secondData]) {
+      assert(target, "second data endpoint required for allowlist acceptance");
+      const catalog = await fetch(
+        target + "/r/test-provider/v1/models?limit=5",
+        { headers: modelHeaders },
+      );
+      assert.equal(catalog.status, 200);
+      assert.equal(catalog.headers.get("X-Model-Catalog"), "preserved");
+      assert.equal((await catalog.json()).data[0].id, "sample-model");
+      const failure = await fetch(
+        target + "/r/test-provider/v1/models?fail=1",
+        { headers: modelHeaders },
+      );
+      assert.equal(failure.status, 403);
+      assert.match(await failure.text(), /PRIVATE_BALANCE_ADMIN_ONLY/);
+    }
+    await page
+      .locator("#channel-list")
+      .getByRole("button", { name: "编辑", exact: true })
+      .click();
+    await page.locator("#editor-allowlist summary").click();
+    await page
+      .locator(".allowed-path-row")
+      .getByRole("button", { name: "删除接口" })
+      .click();
+    await page.locator("#save-channel").click();
+    await page.locator("#pending-changes").click();
+    await page.locator("#publish").click();
+    await page.locator("#latest").filter({ hasText: /^V7$/ }).waitFor();
+    const removalDeadline = Date.now() + 15000;
+    while (
+      (await api(base + "/api/status")).local.applied_version !== 7 &&
+      Date.now() < removalDeadline
+    )
+      await new Promise((r) => setTimeout(r, 300));
+    assert.equal(
+      (await fetch(modelsURL, { headers: modelHeaders })).status,
+      404,
+    );
     await page.setViewportSize({ width: 390, height: 844 });
     assert.equal(
       await page.evaluate(
@@ -295,7 +456,7 @@ async function api(url, method = "GET", body) {
     await page.screenshot({ path: path.join(output, "mobile.png") });
     assert.deepEqual(errors, []);
     console.log(
-      "Real browser/API checks passed: presets, sample match, full publication, two nodes, upstream interception, log query/detail/failure, edit/disable/delete, historical logs, mobile layout.",
+      "Real browser/API checks passed: presets, sample match, full publication, two nodes, upstream interception, log query/detail/failure, edit/disable/delete, historical logs, path allowlist validation/publication/passthrough/removal, mobile layout.",
     );
   } finally {
     await browser.close();

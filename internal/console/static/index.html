@@ -538,6 +538,28 @@
               协议覆盖设置 <span class="muted small">Optional Overrides</span>
             </h3>
             <div id="editor-protocol-details"></div>
+            <details id="editor-allowlist" class="path-allowlist">
+              <summary>
+                接口透传白名单
+                <span id="allowlist-count" class="muted small"></span>
+              </summary>
+              <p class="muted">
+                按请求方法和完整路径精确匹配，路径不含 /r/渠道标识
+                或查询参数。使用所选协议的上游地址和认证设置，查询参数正常传递。
+              </p>
+              <p class="callout">
+                命中的接口直接返回上游状态和原始响应，包括错误信息；不执行错误拦截规则，也不生成拦截日志。发布配置后生效。
+              </p>
+              <div id="editor-allowed-paths"></div>
+              <div class="allowlist-actions">
+                <button id="add-allowed-path" type="button" class="secondary">
+                  添加接口
+                </button>
+                <button id="add-models-path" type="button" class="secondary">
+                  添加模型列表接口
+                </button>
+              </div>
+            </details>
           </div>
           <div class="drawer-actions">
             <span class="muted small">保存仅更新当前页面草稿</span

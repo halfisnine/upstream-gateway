@@ -28,14 +28,14 @@ const errors = {
 let token = "",
   latest = 0,
   base = 0,
-  draft = { schema_version: 5, channels: [] },
+  draft = { schema_version: 6, channels: [] },
   timer = null,
   busy = false,
   dirty = false,
   historyBefore = 0,
   refreshing = false,
   publishedIDs = new Set(),
-  publishedConfig = { schema_version: 5, channels: [] },
+  publishedConfig = { schema_version: 6, channels: [] },
   channelPage = 1,
   editor = null,
   detailVersion = null,
@@ -546,6 +546,120 @@ function renderProtocolDetails() {
       container.append(details);
     });
 }
+function renderAllowedPaths() {
+  const ch = editor.channel;
+  const entries = ch.path_allowlist || [];
+  $("allowlist-count").textContent = `（${entries.length} 项）`;
+  $("add-allowed-path").disabled = $("add-models-path").disabled =
+    entries.length >= 64;
+  const list = $("editor-allowed-paths");
+  list.replaceChildren();
+  entries.forEach((entry, index) => {
+    const row = el("fieldset", undefined, "allowed-path-row");
+    row.append(el("legend", `接口 ${index + 1}`));
+    function choice(title, options, value, update) {
+      const label = el("label", title),
+        select = el("select");
+      select.setAttribute("aria-label", title);
+      options.forEach(([key, text]) => {
+        const option = el("option", text);
+        option.value = key;
+        select.append(option);
+      });
+      select.value = value;
+      select.addEventListener("change", () => update(select.value));
+      label.append(select);
+      return label;
+    }
+    const grid = el("div", undefined, "grid");
+    grid.append(
+      choice(
+        "请求方法",
+        ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"].map(
+          (v) => [v, v],
+        ),
+        entry.method,
+        (v) => (entry.method = v),
+      ),
+    );
+    const protocols = Object.keys(ch.protocols).map((p) => [p, labels[p]]);
+    if (!ch.protocols[entry.protocol])
+      protocols.unshift([
+        entry.protocol,
+        `${labels[entry.protocol] || "请选择协议"}（未启用）`,
+      ]);
+    grid.append(
+      choice(
+        "使用协议设置",
+        protocols,
+        entry.protocol,
+        (v) => (entry.protocol = v),
+      ),
+    );
+    const path = field(
+      "完整路径",
+      entry.path,
+      (v) => (entry.path = v),
+      "text",
+      "/v1/models",
+    );
+    path.querySelector("input").maxLength = 1024;
+    grid.append(path);
+    row.append(
+      grid,
+      button(
+        "删除接口",
+        () => {
+          ch.path_allowlist.splice(index, 1);
+          if (!ch.path_allowlist.length) delete ch.path_allowlist;
+          renderAllowedPaths();
+        },
+        "quiet danger",
+      ),
+    );
+    list.append(row);
+  });
+}
+function addAllowedPath(models = false) {
+  if (!editor || busy) return;
+  const ch = editor.channel;
+  if ((ch.path_allowlist || []).length >= 64) return;
+  const protocol = Object.keys(labels).find((p) => ch.protocols[p]) || "";
+  const path = models
+    ? protocol === "gemini"
+      ? "/v1beta/models"
+      : "/v1/models"
+    : "";
+  if (
+    models &&
+    (ch.path_allowlist || []).some((r) => r.method === "GET" && r.path === path)
+  )
+    return;
+  (ch.path_allowlist ||= []).push({ method: "GET", path, protocol });
+  renderAllowedPaths();
+}
+$("add-allowed-path").addEventListener("click", () => addAllowedPath());
+$("add-models-path").addEventListener("click", () => addAllowedPath(true));
+function allowedPathsProblem(ch) {
+  const seen = new Set();
+  for (const entry of ch.path_allowlist || []) {
+    entry.path = entry.path.trim();
+    if (
+      !/^\/[A-Za-z0-9._~!$&'()+,;=:@/\-]*$/.test(entry.path) ||
+      entry.path.length > 1024 ||
+      entry.path.includes("//") ||
+      entry.path.split("/").some((s) => s === "." || s === "..")
+    )
+      return "白名单路径需以 / 开头，填写完整路径，不含通配符、查询参数或编码字符。";
+    if (!ch.protocols[entry.protocol])
+      return "白名单引用的协议未启用，请选择已启用的协议设置。";
+    const key = `${entry.method} ${entry.path}`;
+    if (seen.has(key))
+      return "白名单中存在相同的请求方法和路径，请删除重复项。";
+    seen.add(key);
+  }
+  return "";
+}
 function openEditor(index = null) {
   if (busy) return;
   const ch =
@@ -643,6 +757,7 @@ function openEditor(index = null) {
         delete ch.protocols[p];
       }
       renderProtocolDetails();
+      renderAllowedPaths();
     });
     option.querySelector("input").setAttribute("aria-label", label);
     const caption = el("span", undefined, "protocol-label");
@@ -651,6 +766,8 @@ function openEditor(index = null) {
     protocols.append(option);
   });
   renderProtocolDetails();
+  $("editor-allowlist").open = false;
+  renderAllowedPaths();
   $("channel-editor").showModal();
   (idInput.disabled ? name.querySelector("input") : idInput).focus();
 }
@@ -672,6 +789,7 @@ $("channel-editor-form").addEventListener("submit", (event) => {
   )
     problem = "此渠道标识已存在，请使用不同标识。";
   else if (!Object.keys(ch.protocols).length) problem = "请至少启用一种协议。";
+  else problem = allowedPathsProblem(ch);
   if (problem) {
     $("editor-error").textContent = problem;
     $("editor-error").hidden = false;
@@ -1105,7 +1223,7 @@ $("logout").addEventListener("click", () => {
   for (const id of ["connection", "pending-changes", "resume-login"])
     $(id).hidden = true;
   clearInterval(timer);
-  draft = { schema_version: 5, channels: [] };
+  draft = { schema_version: 6, channels: [] };
   publishedConfig = structuredClone(draft);
   latest = base = 0;
   $("workspace").hidden = true;

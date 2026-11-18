@@ -1457,3 +1457,26 @@ pre {
   text-align: center;
   color: var(--muted);
 }
+
+.path-allowlist {
+  margin-top: 20px;
+}
+.path-allowlist > summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.allowed-path-row {
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  min-width: 0;
+}
+.allowed-path-row legend {
+  padding: 0 6px;
+}
+.allowlist-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}

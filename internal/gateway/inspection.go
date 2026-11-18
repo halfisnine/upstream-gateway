@@ -323,7 +323,9 @@ func (s *sseReader) next() (raw []byte, event string, data []byte, err error) {
 func (p *Proxy) copyResponse(w *observedWriter, body io.Reader, stream bool, cancel context.CancelFunc) {
 	controller := http.NewResponseController(w)
 	_ = controller.SetWriteDeadline(time.Now().Add(p.write))
-	w.WriteHeader(200)
+	if w.status == 0 {
+		w.WriteHeader(200)
+	}
 	if stream {
 		if err := controller.Flush(); err != nil {
 			panic(http.ErrAbortHandler)

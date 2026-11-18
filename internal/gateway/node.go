@@ -91,6 +91,7 @@ func (n *Node) Activate(c config.Config, v int64, digest string) error {
 			ps[p] = e
 		}
 		ch.Protocols = ps
+		ch.PathAllowlist = append([]config.AllowedPath(nil), ch.PathAllowlist...)
 		snap.Channels[ch.ID] = ch
 	}
 	n.current.Store(snap)

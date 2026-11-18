@@ -223,10 +223,6 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	path := "/" + parts[3]
 	proto := protocol(path)
-	if proto == "" {
-		fail("", 404)
-		return
-	}
 	snap := p.node.Current()
 	if snap == nil || !p.node.Ready() {
 		fail(proto, 503)
@@ -237,18 +233,35 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		fail(proto, 404)
 		return
 	}
+	passthrough := false
+	for _, route := range ch.PathAllowlist {
+		if route.Method == r.Method && route.Path == path {
+			proto, passthrough = route.Protocol, true
+			break
+		}
+	}
 	if _, ok = ch.Protocols[proto]; !ok {
 		fail(proto, 404)
 		return
 	}
-	if r.Method != http.MethodPost {
+	if !passthrough && r.Method != http.MethodPost {
 		w.Header().Set("Allow", "POST")
 		fail(proto, 405)
 		return
 	}
-	if !validQuery(r, proto) {
+	if !passthrough && !validQuery(r, proto) {
 		fail(proto, 400)
 		return
+	}
+	if passthrough {
+		if r.Header.Get("Upgrade") != "" {
+			fail(proto, 400)
+			return
+		}
+		if _, err := url.ParseQuery(r.URL.RawQuery); err != nil {
+			fail(proto, 400)
+			return
+		}
 	}
 	key, originalCredential, validCredential := requestCredential(r, proto)
 	if !validCredential {
@@ -256,7 +269,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	typ, _, e := mime.ParseMediaType(r.Header.Get("Content-Type"))
-	if e != nil || typ != "application/json" || len(r.Header.Values("Content-Type")) != 1 || r.Header.Get("Content-Encoding") != "" {
+	if !passthrough && (e != nil || typ != "application/json" || len(r.Header.Values("Content-Type")) != 1 || r.Header.Get("Content-Encoding") != "") {
 		fail(proto, 400)
 		return
 	}
@@ -280,7 +293,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	target.RawQuery = r.URL.RawQuery
 	// MaxBytesReader bounds streaming uploads; unknown-size requests stay non-replayable.
 	body := http.MaxBytesReader(w, r.Body, 16<<20)
-	out, err := http.NewRequestWithContext(ctx, http.MethodPost, target.String(), body)
+	out, err := http.NewRequestWithContext(ctx, r.Method, target.String(), body)
 	if err != nil {
 		fail(proto, 502)
 		return
@@ -288,12 +301,15 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	out.ContentLength = r.ContentLength
 	out.GetBody = nil
 	hop := connectionHeaders(r.Header)
+	if passthrough {
+		copyPassthroughRequestHeaders(out.Header, r.Header)
+	}
 	for _, h := range []string{"Content-Type", "Accept"} {
 		if !hop[h] {
 			out.Header.Set(h, r.Header.Get(h))
 		}
 	}
-	if out.Header.Get("Content-Type") == "" {
+	if !passthrough && out.Header.Get("Content-Type") == "" {
 		fail(proto, 400)
 		return
 	}
@@ -308,7 +324,9 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	out.Header.Set("Accept-Encoding", "identity")
+	if !passthrough || out.Header.Get("Accept-Encoding") == "" {
+		out.Header.Set("Accept-Encoding", "identity")
+	}
 	h := authHeader(eff.Auth)
 	credential := key
 	if h == "Authorization" {
@@ -335,5 +353,9 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer resp.Body.Close()
+	if passthrough {
+		p.passthroughResponse(observed, r, resp, cancel)
+		return
+	}
 	p.handleResponse(observed, r, resp, snap, ch.ID, proto, id, cancel)
 }
