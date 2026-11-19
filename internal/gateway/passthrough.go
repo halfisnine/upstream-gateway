@@ -19,9 +19,9 @@ func passthroughBlocked(h http.Header) map[string]bool {
 
 func copyPassthroughRequestHeaders(dst, src http.Header) {
 	blocked := passthroughBlocked(src)
-	// Credentials are forwarded separately using the selected protocol. Keep
-	// browser sessions and untrusted proxy routing information out of upstreams.
-	for _, name := range []string{"Authorization", "X-Api-Key", "X-Goog-Api-Key", "Cookie", "Origin", "Referer", "Forwarded", "Host", "Content-Length"} {
+	// Default forwarding preserves authentication as received. Checked routes
+	// replace credential headers separately. Browser/proxy routing state is removed.
+	for _, name := range []string{"Cookie", "Origin", "Referer", "Forwarded", "Host", "Content-Length"} {
 		blocked[name] = true
 	}
 	for name, values := range src {

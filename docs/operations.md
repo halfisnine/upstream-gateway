@@ -113,3 +113,7 @@ sh scripts/test-database.sh upstream-gateway-tests
 也可针对专用测试数据库运行 `.dev/run` 集成测试：将 URL 放入项目 `.dev/private` 文件，并设置 `GATEWAY_TEST_DATABASE_URL_FILE=/workspace/.dev/private/<文件名>`。测试只在自己创建的随机 schema 中读写并清理，测试账号需要 CREATE SCHEMA。禁止指向生产数据库。
 
 合并前可在 `codex/` 分支显式手动发布候选镜像，按 [Docker 验证说明](docker-validation.md) 拉取到独立本地环境验证，通过后再合并 main。正式发布沿用版本标签或 main 上显式手动触发。普通 main 提交和 PR 只测试构建；单独推送功能分支不触发工作流。发布不部署；实际部署锁定镜像 digest。真实供应商、New API 结算/退款与目标机器容量在上线前独立验收。
+
+## 错误检查接口（schema 7）
+
+在“错误检查接口”管理共享匹配模板，在渠道编辑中关联多个模板并排序，保存后顶部统一发布。未命中接口默认使用渠道默认上游并原样透传，模型列表不再需要白名单。先升级全部节点，旧配置会继续按旧路由执行，页面提供转换预览和待发布升级；确认后发布才改变行为。原白名单选择特殊协议覆盖的情况需要核对。配置表无需迁移，详细限制见 [错误检查接口](error-check-interfaces.md)。

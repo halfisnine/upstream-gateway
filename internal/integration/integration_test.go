@@ -63,7 +63,7 @@ func database(t *testing.T) *store.Store {
 	return s
 }
 func cfg(base string) config.Config {
-	return config.Config{Schema: config.Schema, Channels: []config.Channel{{ID: "a", Name: "测试渠道", BaseURL: base, AllowHTTP: true, Protocols: map[string]config.Endpoint{"openai_chat": {}, "gemini": {}}}}}
+	return config.Config{Schema: config.Schema, InspectionTemplates: config.InspectionPresets(), Channels: []config.Channel{{ID: "a", Name: "测试渠道", InspectionTemplates: []string{"openai-chat", "gemini-generation"}, BaseURL: base, AllowHTTP: true, Protocols: map[string]config.Endpoint{"openai_chat": {}, "gemini": {}}}}}
 }
 func publish(t *testing.T, s *store.Store, key []byte, base int64, c config.Config) store.Version {
 	t.Helper()

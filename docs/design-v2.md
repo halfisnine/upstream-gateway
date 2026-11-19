@@ -1,5 +1,7 @@
 # 网关配置、运维页面与多协议设计 v2
 
+2026-11-18 最新修订：schema 7 使用默认透传和共享“错误检查接口”模板，见 [当前接口检查契约](error-check-interfaces.md)。下文未更新的严格路径准入与白名单说明仅适用于尚未重新发布的 schema 3–6 快照；旧快照只升级程序不会改变行为。
+
 日期：2026-11-16；2026-11-17 修订为 New API 凭证随请求转发；错误规则与日志扩展为 schema 4，详见 [实施说明](error-rules.md)；动态并发扩展为 schema 5，详见 [并发设置](concurrency.md)；2026-11-18 接口白名单扩展为 schema 6，详见 [白名单说明](path-allowlist.md)。本文记录本次用户确认的实施契约。替代旧设计中的“没有数据库、没有管理页面、不热更新、一条路由仅一种协议”；其余错误隔离、计费保真、无自动重试约束继续有效。完成情况和实测结果另见交付记录，不把设计当作已验证能力。
 
 ## 1. 本版目标
@@ -12,7 +14,7 @@
 
 ## 2. 配置对象与完整版本
 
-一份 schema 6 配置包含 channels、error_rules、inspect_embedded_errors 和 traffic_limits。每个渠道具有唯一 id、名称、默认 base_url、已启用 protocols 和可选 path_allowlist。每种协议可覆盖 base_url、上游认证头格式和兼容组件。配置中没有上游 Key 或网关内部令牌。入口固定 `/r/<id>`，避免歧义前缀。
+一份 schema 7 配置包含 channels、inspection_templates、error_rules、inspect_embedded_errors 和 traffic_limits。每个渠道具有唯一 id、名称、默认 base_url、协议覆盖 protocols 和按优先级排列的 inspection_templates 关联标识。模板以请求方法和路径选择错误检查范围；未命中接口默认透传。每种协议可覆盖 base_url、上游认证头格式和兼容组件。配置中没有上游 Key 或网关内部令牌。入口固定 `/r/<id>`，避免歧义前缀。
 
 V1 保存 A/B，V2 保存 A/B/C，V3 保存 A/修改后的 B/C。每次点击发布保存完整独立快照，已发布版本不可修改。节点加载完整快照，不应用增量补丁。回滚是将历史内容再次发布为更高版本。历史不自动清理。
 

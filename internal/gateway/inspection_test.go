@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/halfisnine/upstream-gateway/internal/config"
 	"github.com/halfisnine/upstream-gateway/internal/errorrules"
 	"github.com/halfisnine/upstream-gateway/internal/interceptlog"
 )
@@ -38,6 +39,11 @@ func inspectSetup(t *testing.T, h http.HandlerFunc) (*Node, *httptest.Server, *e
 	s := &eventSink{}
 	n.Logs = interceptlog.New(s)
 	c := testConfig(up.URL)
+	c.LegacyRouting = false
+	c.InspectionTemplates = config.InspectionPresets()
+	for _, template := range c.InspectionTemplates[:4] {
+		c.Channels[0].InspectionTemplates = append(c.Channels[0].InspectionTemplates, template.ID)
+	}
 	c.InspectEmbeddedErrors = true
 	c.ErrorRules = errorrules.Presets()
 	if e := n.Activate(c, 7, "test"); e != nil {

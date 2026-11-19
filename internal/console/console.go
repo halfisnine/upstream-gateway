@@ -51,6 +51,27 @@ func (c *Console) Handler() http.Handler {
 	api := http.NewServeMux()
 	api.HandleFunc("GET /api/status", c.status)
 	api.HandleFunc("GET /api/error-presets", c.presets)
+	api.HandleFunc("GET /api/inspection-presets", func(w http.ResponseWriter, r *http.Request) { send(w, 200, config.InspectionPresets()) })
+	api.HandleFunc("POST /api/inspection-test", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Template config.InspectionTemplate `json:"template"`
+			Method   string                    `json:"method"`
+			Path     string                    `json:"path"`
+		}
+		if !read(w, r, &req) {
+			return
+		}
+		t, err := config.CompileTemplate(req.Template)
+		if err != nil {
+			failure(w, 422, err.Error())
+			return
+		}
+		if !config.ValidAllowedMethod(req.Method) || !config.ValidAllowedPath(req.Path) {
+			failure(w, 422, "invalid_match_sample")
+			return
+		}
+		send(w, 200, map[string]bool{"matched": t.Match(req.Method, req.Path)})
+	})
 	api.HandleFunc("POST /api/error-test", c.testRule)
 	api.HandleFunc("GET /api/interceptions", c.interceptions)
 	api.HandleFunc("GET /api/interceptions/{id}/original", c.originalError)
@@ -67,7 +88,7 @@ func (c *Console) Handler() http.Handler {
 			failure(w, 405, "method_not_allowed")
 			return
 		}
-		if r.URL.Path != "/" && r.URL.Path != "/app.js" && r.URL.Path != "/style.css" && r.URL.Path != "/rules.js" && r.URL.Path != "/rules.css" {
+		if r.URL.Path != "/" && r.URL.Path != "/app.js" && r.URL.Path != "/templates.js" && r.URL.Path != "/style.css" && r.URL.Path != "/rules.js" && r.URL.Path != "/rules.css" {
 			failure(w, 404, "not_found")
 			return
 		}

@@ -16,7 +16,7 @@ import (
 	"strings"
 )
 
-const Schema = 6
+const Schema = 7
 
 var ErrLegacyConfig = errors.New("legacy_configuration_requires_republish")
 
@@ -29,12 +29,13 @@ type Endpoint struct {
 	Compatibility string `json:"compatibility,omitempty"`
 }
 type Channel struct {
-	ID            string              `json:"id"`
-	Name          string              `json:"name"`
-	BaseURL       string              `json:"base_url"`
-	AllowHTTP     bool                `json:"allow_http,omitempty"`
-	Protocols     map[string]Endpoint `json:"protocols"`
-	PathAllowlist []AllowedPath       `json:"path_allowlist,omitempty"`
+	ID                  string              `json:"id"`
+	Name                string              `json:"name"`
+	BaseURL             string              `json:"base_url"`
+	AllowHTTP           bool                `json:"allow_http,omitempty"`
+	Protocols           map[string]Endpoint `json:"protocols"`
+	PathAllowlist       []AllowedPath       `json:"path_allowlist,omitempty"` // Legacy snapshots only.
+	InspectionTemplates []string            `json:"inspection_templates,omitempty"`
 }
 
 // AllowedPath selects an existing protocol's upstream and credential settings.
@@ -86,14 +87,18 @@ func (l TrafficLimits) Effective() TrafficLimits {
 }
 
 type Config struct {
-	Schema                int           `json:"schema_version"`
-	TrafficLimits         TrafficLimits `json:"traffic_limits"`
-	Channels              []Channel     `json:"channels"`
-	InspectEmbeddedErrors bool          `json:"inspect_embedded_errors"`
-	ErrorRules            []Rule        `json:"error_rules,omitempty"`
+	Schema                int                  `json:"schema_version"`
+	LegacyRouting         bool                 `json:"-"`
+	InspectionTemplates   []InspectionTemplate `json:"inspection_templates,omitempty"`
+	TrafficLimits         TrafficLimits        `json:"traffic_limits"`
+	Channels              []Channel            `json:"channels"`
+	InspectEmbeddedErrors bool                 `json:"inspect_embedded_errors"`
+	ErrorRules            []Rule               `json:"error_rules,omitempty"`
 }
 
-func Empty() Config { return Config{Schema: Schema, Channels: []Channel{}} }
+func Empty() Config {
+	return Config{Schema: Schema, Channels: []Channel{}, InspectionTemplates: InspectionPresets()}
+}
 
 // Decode rejects both duplicate keys and unknown fields, including in nested objects.
 func Decode(data []byte, dst any) error {
@@ -214,6 +219,21 @@ func Validate(c Config) error {
 	if len(c.Channels) > 128 {
 		return errors.New("too_many_channels")
 	}
+	templates := map[string]InspectionTemplate{}
+	if !c.LegacyRouting {
+		if len(c.InspectionTemplates) > 1024 {
+			return errors.New("too_many_inspection_templates")
+		}
+		for _, t := range c.InspectionTemplates {
+			if _, exists := templates[t.ID]; exists {
+				return errors.New("duplicate_inspection_template")
+			}
+			if _, err := CompileTemplate(t); err != nil {
+				return err
+			}
+			templates[t.ID] = t
+		}
+	}
 	ids := map[string]bool{}
 	for i, ch := range c.Channels {
 		field := fmt.Sprintf("channels[%d]", i)
@@ -228,8 +248,27 @@ func Validate(c Config) error {
 		if !validURL(ch.BaseURL, ch.AllowHTTP) {
 			return fail("invalid_base_url")
 		}
-		if len(ch.Protocols) == 0 || len(ch.Protocols) > 4 {
+		if (c.LegacyRouting && len(ch.Protocols) == 0) || len(ch.Protocols) > 4 {
 			return fail("invalid_protocols")
+		}
+		if !c.LegacyRouting {
+			if len(ch.PathAllowlist) > 0 {
+				return fail("legacy_allowlist_requires_conversion")
+			}
+			if len(ch.InspectionTemplates) > 64 {
+				return fail("too_many_inspection_templates")
+			}
+			seen := map[string]bool{}
+			for _, id := range ch.InspectionTemplates {
+				t, ok := templates[id]
+				if !ok || seen[id] {
+					return fail("missing_or_duplicate_inspection_template")
+				}
+				if _, ok := ch.Protocols[t.Protocol]; !ok {
+					return fail("inspection_protocol_not_enabled")
+				}
+				seen[id] = true
+			}
 		}
 		if len(ch.PathAllowlist) > 64 {
 			return fail("too_many_allowed_paths")
@@ -265,6 +304,9 @@ func Validate(c Config) error {
 }
 
 func Seal(c Config, key []byte) ([]byte, string, error) {
+	if c.LegacyRouting {
+		return nil, "", errors.New("legacy_configuration_requires_conversion")
+	}
 	if err := Validate(c); err != nil {
 		return nil, "", err
 	}
@@ -291,11 +333,11 @@ func Seal(c Config, key []byte) ([]byte, string, error) {
 
 // Open is used by runtime nodes. A legacy snapshot must be explicitly republished.
 func Open(data []byte, digest string, key []byte) (Config, error) {
-	c, source, err := OpenForEdit(data, digest, key)
+	c, source, err := openStored(data, digest, key)
 	if err != nil {
 		return c, err
 	}
-	if source != Schema && source != 5 && source != 4 && source != 3 {
+	if source != Schema && source != 6 && source != 5 && source != 4 && source != 3 {
 		return Empty(), ErrLegacyConfig
 	}
 	return c, nil
@@ -304,6 +346,17 @@ func Open(data []byte, digest string, key []byte) (Config, error) {
 // OpenForEdit never returns stored legacy credentials. The returned config is
 // always the current schema, while source identifies the immutable original.
 func OpenForEdit(data []byte, digest string, key []byte) (Config, int, error) {
+	c, source, err := openStored(data, digest, key)
+	if err != nil {
+		return c, source, err
+	}
+	if source < Schema {
+		c = migrateInspection(c)
+	}
+	return c, source, Validate(c)
+}
+
+func openStored(data []byte, digest string, key []byte) (Config, int, error) {
 	fail := func(e string) (Config, int, error) { return Empty(), 0, errors.New(e) }
 	sum := sha256.Sum256(data)
 	if hex.EncodeToString(sum[:]) != digest {
@@ -317,13 +370,13 @@ func OpenForEdit(data []byte, digest string, key []byte) (Config, int, error) {
 	if err != nil || len(data) < g.NonceSize() {
 		return fail("invalid_snapshot")
 	}
-	for _, schema := range []int{Schema, 5, 4, 3, 2} {
+	for _, schema := range []int{Schema, 6, 5, 4, 3, 2} {
 		raw, err := g.Open(nil, data[:g.NonceSize()], data[g.NonceSize():], []byte(fmt.Sprintf("upstream-gateway-schema-%d", schema)))
 		if err != nil {
 			continue
 		}
-		if schema == Schema || schema == 5 || schema == 4 || schema == 3 {
-			c := Empty()
+		if schema == Schema || schema == 6 || schema == 5 || schema == 4 || schema == 3 {
+			var c Config
 			if err = Decode(raw, &c); err != nil {
 				return Empty(), 0, err
 			}
@@ -339,6 +392,7 @@ func OpenForEdit(data []byte, digest string, key []byte) (Config, int, error) {
 				}
 			}
 			c.Schema = Schema
+			c.LegacyRouting = schema < Schema
 			if schema == 3 {
 				c.InspectEmbeddedErrors = false
 				c.ErrorRules = nil
