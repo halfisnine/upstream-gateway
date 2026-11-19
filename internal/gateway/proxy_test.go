@@ -25,7 +25,8 @@ func testConfig(base string) config.Config {
 	for _, p := range config.Protocols {
 		ps[p] = config.Endpoint{}
 	}
-	return config.Config{Schema: config.Schema, Channels: []config.Channel{{ID: "a", Name: "A", BaseURL: base, AllowHTTP: true, Protocols: ps}}}
+	// This fixture exercises the router retained for unpublished legacy snapshots.
+	return config.Config{Schema: config.Schema, LegacyRouting: true, Channels: []config.Channel{{ID: "a", Name: "A", BaseURL: base, AllowHTTP: true, Protocols: ps}}}
 }
 func setup(t *testing.T, h http.HandlerFunc) (*Node, *httptest.Server) {
 	t.Helper()
@@ -454,7 +455,7 @@ func TestCredentialFormatOverridePreservesCallerKey(t *testing.T) {
 	})
 	old := testConfig(n.Current().Channels["a"].BaseURL).Channels[0]
 	old.Protocols["anthropic_messages"] = config.Endpoint{Auth: "bearer"}
-	if e := n.Activate(config.Config{Schema: config.Schema, Channels: []config.Channel{old}}, 2, "override"); e != nil {
+	if e := n.Activate(config.Config{Schema: config.Schema, LegacyRouting: true, Channels: []config.Channel{old}}, 2, "override"); e != nil {
 		t.Fatal(e)
 	}
 	res, _ := call(t, request(t, gw.URL, "/v1/messages"))

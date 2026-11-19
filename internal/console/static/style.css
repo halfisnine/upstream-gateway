@@ -1457,3 +1457,269 @@ pre {
   text-align: center;
   color: var(--muted);
 }
+
+.path-allowlist {
+  margin-top: 20px;
+}
+.path-allowlist > summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.allowed-path-row {
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  min-width: 0;
+}
+.allowed-path-row legend {
+  padding: 0 6px;
+}
+.allowlist-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.template-link {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0;
+}
+.template-link > span:first-child,
+.template-link > strong {
+  flex: 1;
+  min-width: 100px;
+  overflow-wrap: anywhere;
+}
+.template-choices {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+}
+.template-choice {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+.template-choice input {
+  width: auto;
+  flex-shrink: 0;
+  margin: 0;
+}
+.template-path {
+  overflow-wrap: anywhere;
+}
+#template-exclusions {
+  margin: 20px 0;
+}
+
+/* Keep the everyday workflow visible; technical overrides stay expandable. */
+.editor-section {
+  margin-top: 24px;
+}
+.advanced-settings {
+  margin: 20px 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.advanced-settings > summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.advanced-settings[open] > summary {
+  margin-bottom: 16px;
+}
+.template-choices {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.template-choice {
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow-wrap: anywhere;
+}
+.template-choice:has(:checked) {
+  background: #f0fdf4;
+  border-color: #86efac;
+}
+.template-choice > span {
+  min-width: 0;
+}
+#template-fields > p {
+  grid-column: 1 / -1;
+}
+@media (max-width: 600px) {
+  .template-choices {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Compact, comparable template rows with stacked fields on smaller screens. */
+.template-panel {
+  padding: 20px;
+}
+.template-page-heading,
+.template-toolbar,
+.template-filters {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.template-page-heading {
+  justify-content: space-between;
+}
+.template-page-heading p {
+  margin: 6px 0 0;
+}
+.template-toolbar {
+  align-items: end;
+  padding: 16px 0;
+}
+.template-toolbar label {
+  min-width: 200px;
+}
+.template-filters {
+  border-top: 1px solid var(--line);
+  padding: 16px 0;
+}
+.template-filters input {
+  flex: 1;
+  min-width: 180px;
+}
+.template-filters select {
+  width: auto;
+  max-width: 100%;
+}
+.template-range-note {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  background: #fffbeb;
+  color: #92400e;
+  border-radius: 6px;
+  font-size: 12px;
+}
+.template-table {
+  white-space: normal;
+  width: 100%;
+  table-layout: fixed;
+}
+.template-table th,
+.template-table td {
+  padding: 12px;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+.template-table th:first-child {
+  width: 19%;
+}
+.template-table th:nth-child(2) {
+  width: 14%;
+}
+.template-table th:nth-child(3) {
+  width: 13%;
+}
+.template-table th:nth-child(4) {
+  width: 15%;
+}
+.template-table th:nth-child(5) {
+  width: 10%;
+}
+.template-table th:nth-child(6) {
+  width: 16%;
+}
+.template-table th:last-child {
+  width: 13%;
+}
+.template-table summary {
+  cursor: pointer;
+}
+.template-table details p {
+  margin: 8px 0 0;
+}
+.template-protocol-tag {
+  font-size: 11px;
+  color: var(--muted);
+}
+.template-range-hint {
+  display: block;
+  color: #92400e;
+  margin-top: 4px;
+}
+.template-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.template-row-actions button {
+  padding: 3px 5px;
+  font-size: 12px;
+}
+.template-footer {
+  margin-top: 16px;
+}
+@media (max-width: 1000px) {
+  .template-table,
+  .template-table tbody {
+    display: block;
+  }
+  .template-table thead {
+    display: none;
+  }
+  .template-table .template-card {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 8px;
+    margin-bottom: 12px;
+  }
+  .template-table td {
+    display: block;
+    border: 0;
+    padding: 8px;
+    min-width: 0;
+  }
+  .template-table td::before {
+    content: attr(data-label);
+    display: block;
+    font-size: 11px;
+    color: var(--muted);
+    margin-bottom: 5px;
+  }
+  .template-table td:first-child,
+  .template-table td:last-child {
+    grid-column: 1 / -1;
+  }
+  .template-table td:first-child::before,
+  .template-table td:last-child::before {
+    display: none;
+  }
+  .template-row-actions {
+    justify-content: flex-end;
+  }
+}
+@media (max-width: 600px) {
+  .template-panel {
+    padding: 12px;
+  }
+  .template-toolbar > label {
+    flex: 1;
+    min-width: 0;
+  }
+  .template-toolbar > span {
+    width: 100%;
+  }
+  .template-filters input {
+    flex-basis: 100%;
+  }
+  .template-filters select {
+    flex: 1;
+    min-width: 0;
+  }
+}

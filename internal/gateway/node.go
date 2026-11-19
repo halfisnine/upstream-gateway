@@ -17,12 +17,14 @@ import (
 )
 
 type Snapshot struct {
-	Version  int64
-	Digest   string
-	Channels map[string]config.Channel
-	Rules    []config.Rule
-	Inspect  bool
-	Limits   config.TrafficLimits
+	LegacyRouting bool
+	Templates     map[string]config.CompiledTemplate
+	Version       int64
+	Digest        string
+	Channels      map[string]config.Channel
+	Rules         []config.Rule
+	Inspect       bool
+	Limits        config.TrafficLimits
 }
 type Node struct {
 	Store          *store.Store
@@ -85,12 +87,25 @@ func (n *Node) Activate(c config.Config, v int64, digest string) error {
 	var rules []config.Rule
 	_ = json.Unmarshal(raw, &rules)
 	snap := &Snapshot{Version: v, Digest: digest, Channels: map[string]config.Channel{}, Rules: rules, Inspect: c.InspectEmbeddedErrors, Limits: c.TrafficLimits.Effective()}
+	snap.LegacyRouting = c.LegacyRouting
+	snap.Templates = map[string]config.CompiledTemplate{}
+	if !c.LegacyRouting {
+		for _, t := range c.InspectionTemplates {
+			compiled, err := config.CompileTemplate(t)
+			if err != nil {
+				return err
+			}
+			snap.Templates[t.ID] = compiled
+		}
+	}
 	for _, ch := range c.Channels { // Take ownership without retaining the caller's mutable maps.
 		ps := make(map[string]config.Endpoint, len(ch.Protocols))
 		for p, e := range ch.Protocols {
 			ps[p] = e
 		}
 		ch.Protocols = ps
+		ch.InspectionTemplates = append([]string(nil), ch.InspectionTemplates...)
+		ch.PathAllowlist = append([]config.AllowedPath(nil), ch.PathAllowlist...)
 		snap.Channels[ch.ID] = ch
 	}
 	n.current.Store(snap)

@@ -128,8 +128,8 @@
   function render() {
     $("er-inspect").checked = !!draft.inspect_embedded_errors;
     $("inspection-summary").textContent = draft.inspect_embedded_errors
-      ? "草稿已开启 200 JSON / SSE 错误检查，发布后新请求生效。未知格式仍需按实际供应商版本验收。"
-      : "草稿未开启正文检查：仅隔离非 200 响应。可在「错误规则」页开启 200 JSON / SSE 检查后发布。";
+      ? "草稿已开启正文检查，仅对命中 JSON / SSE 模板的接口生效；未命中的接口默认透传。"
+      : "草稿未开启正文检查；仅对关联模板命中的接口处理 HTTP 错误。未命中的接口默认透传，模板关联在渠道编辑中设置。";
     $("error-rule-count").textContent = rules().length;
     const list = $("er-list");
     list.replaceChildren();
@@ -341,6 +341,7 @@
     form = {
       isNew: !rules().some((r) => r.id === editing.id),
       scope: editing.channels?.length ? "selected" : "all",
+      advanced: false,
       statuses: (editing.statuses || [])
         .map((s) => (s.from === s.to ? s.from : `${s.from}-${s.to}`))
         .join(", "),
@@ -354,14 +355,34 @@
   }
   function drawConfigure() {
     configure.replaceChildren();
-    configure.append(el("h3", "1 · 基本信息"));
     const grid = el("div", undefined, "grid");
-    grid.append(
-      field("规则名称", editing.name, (v) => (editing.name = v)),
-      field("规则 ID", editing.id, (v) => (editing.id = v)),
+    grid.append(field("规则名称", editing.name, (v) => (editing.name = v)));
+    const advanced = el("details", undefined, "advanced-settings");
+    advanced.open = form.advanced;
+    const currentForm = form;
+    advanced.addEventListener("toggle", () => {
+      if (advanced.isConnected) currentForm.advanced = advanced.open;
+    });
+    const restricted =
+      (editing.protocols || []).length || editing.sources.length !== 3;
+    advanced.append(
+      el(
+        "summary",
+        "高级匹配设置" + (restricted ? " · 已设置协议或错误来源限制" : ""),
+      ),
     );
-    grid.lastChild.querySelector("input").disabled = !form.isNew;
+    const ruleID = field("规则 ID", editing.id, (v) => (editing.id = v));
+    ruleID.querySelector("input").disabled = !form.isNew;
+    advanced.append(ruleID);
     configure.append(grid);
+    configure.append(
+      el("h3", "1 · 匹配什么错误"),
+      el(
+        "p",
+        "只处理接口模板已选中或正文检查已识别的错误。这里的状态条件不会扩大接口模板的检查范围。",
+        "muted small",
+      ),
+    );
     configure.append(
       select(
         "适用渠道",
@@ -391,19 +412,22 @@
         ),
       );
     }
-    configure.append(
+    advanced.append(
       el("p", "适用协议（不勾选表示全部）", "muted small"),
       checks(Object.entries(labels), editing.protocols || [], (v) => {
         editing.protocols = v;
         drawConfigure();
       }),
     );
-    configure.append(
-      el("h3", "2 · 什么情况下拦截"),
+    advanced.append(
+      el("p", "错误来源", "muted small"),
       checks(Object.entries(names), editing.sources, (v) => {
         editing.sources = v;
         drawConfigure();
       }),
+    );
+    configure.append(
+      advanced,
       field(
         "匹配上游 HTTP 状态",
         form.statuses,
@@ -415,8 +439,17 @@
       ),
     );
     const details = el("details");
-    details.open = true;
-    details.append(el("summary", "内容条件 · 条件组之间为 OR，组内条件为 AND"));
+    details.open = !!form.conditionsOpen;
+    details.className = "advanced-settings";
+    details.addEventListener("toggle", () => {
+      if (details.isConnected) currentForm.conditionsOpen = details.open;
+    });
+    details.append(
+      el(
+        "summary",
+        `错误内容条件 · ${(editing.groups || []).length} 组${editing.groups?.length ? "（满足任一组，组内全部满足）" : "（未设置，按以上范围匹配）"}`,
+      ),
+    );
     (editing.groups || []).forEach((group, gi) => {
       const box = el("div", undefined, "er-condition"),
         head = el("div", undefined, "er-condition-title");
@@ -526,7 +559,7 @@
     );
     configure.append(details);
     configure.append(
-      el("h3", "3 · 命中后如何返回"),
+      el("h3", "2 · 返回什么结果"),
       select(
         "返回 HTTP 状态",
         [
@@ -795,6 +828,7 @@
     }
     draft.inspect_embedded_errors = $("er-inspect").checked;
     update();
+    window.inspectionTools?.render();
   };
   function status(state) {
     const node = $("er-log-health");
@@ -973,7 +1007,11 @@
           el("span", log.request_id, "er-sub mono"),
         );
         channel.append(
-          el("span", log.channel),
+          el(
+            "span",
+            draft.channels.find((ch) => ch.id === log.channel)?.name ||
+              log.channel,
+          ),
           el("span", labels[log.protocol], "er-sub"),
         );
         rule.append(
@@ -983,8 +1021,15 @@
         statusCell.append(
           el("span", `${log.upstream_status} → ${log.actual_status}`, "mono"),
         );
-        if (log.action === "safe_sse_error")
-          statusCell.append(el("span", "流内失败 · HTTP 已提交", "er-sub"));
+        statusCell.append(
+          el(
+            "span",
+            log.action === "safe_sse_error"
+              ? "已替换为安全错误事件 · HTTP 已提交"
+              : "已替换为安全错误响应",
+            "er-sub",
+          ),
+        );
         node.append(
           el("span", log.node),
           el("span", "V" + log.version, "er-sub"),

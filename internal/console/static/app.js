@@ -25,17 +25,18 @@ const errors = {
   cross_origin_rejected: "已拒绝跨站请求。",
   publication_failed: "发布失败，请检查数据库并刷新状态确认结果。",
 };
+let migrationPending = false;
 let token = "",
   latest = 0,
   base = 0,
-  draft = { schema_version: 5, channels: [] },
+  draft = { schema_version: 7, channels: [] },
   timer = null,
   busy = false,
   dirty = false,
   historyBefore = 0,
   refreshing = false,
   publishedIDs = new Set(),
-  publishedConfig = { schema_version: 5, channels: [] },
+  publishedConfig = { schema_version: 7, channels: [] },
   channelPage = 1,
   editor = null,
   detailVersion = null,
@@ -77,6 +78,12 @@ function channelState(ch) {
 }
 function pendingChanges() {
   const changes = [];
+  if (migrationPending)
+    changes.push({
+      kind: "配置升级",
+      action: "切换",
+      name: "默认透传；按关联模板启用错误检查",
+    });
   function objects(oldItems, newItems, kind, orderSensitive = false) {
     const before = new Map(oldItems.map((x) => [x.id, x]));
     const after = new Map(newItems.map((x) => [x.id, x]));
@@ -113,6 +120,11 @@ function pendingChanges() {
         });
   }
   objects(publishedConfig.channels, draft.channels, "渠道");
+  objects(
+    publishedConfig.inspection_templates || [],
+    draft.inspection_templates || [],
+    "接口模板",
+  );
   objects(
     publishedConfig.error_rules || [],
     draft.error_rules || [],
@@ -159,7 +171,12 @@ function trafficValid() {
   );
 }
 function hasUnsavedEdits() {
-  return dirty || editorChanged() || !!window.errorTools?.changed();
+  return (
+    dirty ||
+    editorChanged() ||
+    !!window.errorTools?.changed() ||
+    !!window.inspectionTools?.changed()
+  );
 }
 function draftNotice() {
   notice(
@@ -180,6 +197,7 @@ function mark() {
     : "当前配置没有未发布修改。";
   for (const [id, kind] of [
     ["channel-pending", "渠道"],
+    ["template-pending", "接口模板"],
     ["rule-pending", "错误规则"],
   ]) {
     const count = changes.filter(
@@ -546,6 +564,59 @@ function renderProtocolDetails() {
       container.append(details);
     });
 }
+function renderProtocolOptions() {
+  if (!editor) return;
+  const ch = editor.channel;
+  const protocols = $("editor-protocol-options");
+  protocols.replaceChildren();
+  const protocolPaths = {
+    openai_chat: "/v1/chat/completions",
+    openai_responses: "/v1/responses",
+    anthropic_messages: "/v1/messages",
+    gemini: ":generateContent / :streamGenerateContent",
+  };
+  Object.entries(labels).forEach(([p, label]) => {
+    const option = check(label, !!ch.protocols[p], (enabled) => {
+      if (enabled)
+        ch.protocols[p] = editor.protocolCache[p] || {
+          compatibility: "standard_v1",
+        };
+      else {
+        editor.protocolCache[p] = ch.protocols[p];
+        delete ch.protocols[p];
+      }
+      renderProtocolDetails();
+      window.inspectionTools?.renderLinks();
+    });
+    const input = option.querySelector("input");
+    input.setAttribute("aria-label", label);
+    input.disabled = (ch.inspection_templates || []).some((id) =>
+      (draft.inspection_templates || []).some(
+        (t) => t.id === id && t.protocol === p,
+      ),
+    );
+    if (input.disabled) option.title = "已选模板需要此协议；请先取消模板关联。";
+    const caption = el("span", undefined, "protocol-label");
+    caption.append(el("span", label), el("small", protocolPaths[p]));
+    option.lastChild.replaceWith(caption);
+    protocols.append(option);
+  });
+  renderProtocolDetails();
+  updateProtocolSummary();
+}
+function updateProtocolSummary() {
+  if (!editor) return;
+  const ch = editor.channel;
+  const overrides = Object.values(ch.protocols).filter(
+    (ep) => ep.base_url || ep.auth,
+  ).length;
+  $("channel-advanced-summary").textContent = [
+    ch.allow_http ? "已允许 HTTP" : "",
+    overrides ? `${overrides} 项协议覆盖` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
 function openEditor(index = null) {
   if (busy) return;
   const ch =
@@ -554,7 +625,7 @@ function openEditor(index = null) {
           id: "",
           name: "",
           base_url: "",
-          protocols: { openai_chat: { compatibility: "standard_v1" } },
+          protocols: {},
         }
       : structuredClone(draft.channels[index]);
   editor = {
@@ -623,37 +694,16 @@ function openEditor(index = null) {
       (v) => (ch.allow_http = v),
     ),
   );
-  const protocols = $("editor-protocol-options");
-  protocols.replaceChildren();
   $("editor-protocol-details").replaceChildren();
-  const protocolPaths = {
-    openai_chat: "/v1/chat/completions",
-    openai_responses: "/v1/responses",
-    anthropic_messages: "/v1/messages",
-    gemini: ":generateContent / :streamGenerateContent",
-  };
-  Object.entries(labels).forEach(([p, label]) => {
-    const option = check(label, !!ch.protocols[p], (enabled) => {
-      if (enabled)
-        ch.protocols[p] = editor.protocolCache[p] || {
-          compatibility: "standard_v1",
-        };
-      else {
-        editor.protocolCache[p] = ch.protocols[p];
-        delete ch.protocols[p];
-      }
-      renderProtocolDetails();
-    });
-    option.querySelector("input").setAttribute("aria-label", label);
-    const caption = el("span", undefined, "protocol-label");
-    caption.append(el("span", label), el("small", protocolPaths[p]));
-    option.lastChild.replaceWith(caption);
-    protocols.append(option);
-  });
-  renderProtocolDetails();
+  $("channel-advanced").open = false;
+  $("inspection-order").open = false;
+  renderProtocolOptions();
+  window.inspectionTools?.renderLinks();
   $("channel-editor").showModal();
   (idInput.disabled ? name.querySelector("input") : idInput).focus();
 }
+$("channel-editor-form").addEventListener("input", updateProtocolSummary);
+$("channel-editor-form").addEventListener("change", updateProtocolSummary);
 $("channel-editor-form").addEventListener("submit", (event) => {
   event.preventDefault();
   if (!editor) return;
@@ -671,7 +721,13 @@ $("channel-editor-form").addEventListener("submit", (event) => {
     )
   )
     problem = "此渠道标识已存在，请使用不同标识。";
-  else if (!Object.keys(ch.protocols).length) problem = "请至少启用一种协议。";
+  else if (
+    (ch.inspection_templates || []).some((id) => {
+      const t = (draft.inspection_templates || []).find((t) => t.id === id);
+      return !t || !ch.protocols[t.protocol];
+    })
+  )
+    problem = "关联模板的协议未启用，请启用协议或取消关联。";
   if (problem) {
     $("editor-error").textContent = problem;
     $("editor-error").hidden = false;
@@ -768,12 +824,14 @@ async function loadConfig() {
   trafficSummary();
   publishedConfig = structuredClone(draft);
   publishedIDs = new Set(draft.channels.map((ch) => ch.id));
+  migrationPending = !!v.requires_republish;
   $("migration-notice").hidden = !v.requires_republish;
   dirty = false;
   $("baseline").textContent = "V" + base;
   mark();
   renderChannels();
   window.errorTools?.render();
+  window.inspectionTools?.render();
   renderStatus(state);
 }
 function renderStatus(s) {
@@ -1091,8 +1149,10 @@ $("logout").addEventListener("click", () => {
   token = "";
   forgetToken();
   loadedSession = false;
+  migrationPending = false;
   suspendedDialogs = [];
   window.errorTools?.clear();
+  window.inspectionTools?.clear();
   editor = null;
   document.querySelectorAll("dialog[open]").forEach((d) => d.close());
   dirty = false;
@@ -1105,7 +1165,7 @@ $("logout").addEventListener("click", () => {
   for (const id of ["connection", "pending-changes", "resume-login"])
     $(id).hidden = true;
   clearInterval(timer);
-  draft = { schema_version: 5, channels: [] };
+  draft = { schema_version: 7, channels: [] };
   publishedConfig = structuredClone(draft);
   latest = base = 0;
   $("workspace").hidden = true;
@@ -1190,10 +1250,12 @@ $("publish-form").addEventListener("submit", (e) => {
     $("synced").textContent = "待确认";
     $("synced").className = "badge warn";
     $("node-tab-count").textContent = "—";
+    migrationPending = false;
     $("migration-notice").hidden = true;
     mark();
     renderChannels();
     window.errorTools?.render();
+    window.inspectionTools?.render();
     $("publish-dialog").close();
     $("publish-note").value = "";
     $("sync-state").textContent = `V${v.id} 已发布，正在等待节点同步。`;
@@ -1216,11 +1278,17 @@ document.querySelectorAll("[data-tab]").forEach((b) =>
     if (b.dataset.tab === "history") action(() => history());
     if (b.dataset.tab === "nodes") refresh();
     if (b.dataset.tab === "error-rules") window.errorTools?.render();
+    window.inspectionTools?.render();
     if (b.dataset.tab === "intercept-logs") window.errorTools?.logs();
   }),
 );
 window.addEventListener("beforeunload", (e) => {
-  if (dirty || editorChanged() || window.errorTools?.changed()) {
+  if (
+    dirty ||
+    editorChanged() ||
+    window.errorTools?.changed() ||
+    window.inspectionTools?.changed()
+  ) {
     e.preventDefault();
     e.returnValue = "";
   }
@@ -1270,6 +1338,11 @@ $("compare-details").addEventListener("click", () => {
   const byID = (cfg) =>
     Object.fromEntries(cfg.channels.map((ch) => [ch.id, ch]));
   compare(byID(detailVersion.config), byID(draft), "channels");
+  compare(
+    detailVersion.config.inspection_templates || [],
+    draft.inspection_templates || [],
+    "inspection_templates",
+  );
   compare(
     trafficLimits(detailVersion.config),
     trafficLimits(draft),

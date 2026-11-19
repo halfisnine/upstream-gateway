@@ -66,7 +66,7 @@ func boundedRead(r io.Reader, limit int) ([]byte, error) {
 	}
 	return raw, e
 }
-func (p *Proxy) handleResponse(w *observedWriter, r *http.Request, resp *http.Response, snap *Snapshot, channel, proto, id string, cancel context.CancelFunc) {
+func (p *Proxy) handleResponse(w *observedWriter, r *http.Request, resp *http.Response, snap *Snapshot, channel, proto, id string, cancel context.CancelFunc, forceHTTP bool) {
 	controller := http.NewResponseController(w)
 	defer controller.SetWriteDeadline(time.Time{})
 	var original []byte
@@ -122,7 +122,7 @@ func (p *Proxy) handleResponse(w *observedWriter, r *http.Request, resp *http.Re
 			panic(http.ErrAbortHandler)
 		}
 	}
-	if resp.StatusCode != 200 {
+	if forceHTTP || resp.StatusCode != 200 {
 		// Limit total wait even if a malicious upstream trickles bytes forever.
 		timer := time.AfterFunc(2*time.Second, cancel)
 		reader, e := decodedBody(resp, cancel, p.idle)
@@ -323,7 +323,9 @@ func (s *sseReader) next() (raw []byte, event string, data []byte, err error) {
 func (p *Proxy) copyResponse(w *observedWriter, body io.Reader, stream bool, cancel context.CancelFunc) {
 	controller := http.NewResponseController(w)
 	_ = controller.SetWriteDeadline(time.Now().Add(p.write))
-	w.WriteHeader(200)
+	if w.status == 0 {
+		w.WriteHeader(200)
+	}
 	if stream {
 		if err := controller.Flush(); err != nil {
 			panic(http.ErrAbortHandler)

@@ -63,7 +63,7 @@ func database(t *testing.T) *store.Store {
 	return s
 }
 func cfg(base string) config.Config {
-	return config.Config{Schema: config.Schema, Channels: []config.Channel{{ID: "a", Name: "测试渠道", BaseURL: base, AllowHTTP: true, Protocols: map[string]config.Endpoint{"openai_chat": {}, "gemini": {}}}}}
+	return config.Config{Schema: config.Schema, InspectionTemplates: config.InspectionPresets(), Channels: []config.Channel{{ID: "a", Name: "测试渠道", InspectionTemplates: []string{"openai-chat", "gemini-generation"}, BaseURL: base, AllowHTTP: true, Protocols: map[string]config.Endpoint{"openai_chat": {}, "gemini": {}}}}}
 }
 func publish(t *testing.T, s *store.Store, key []byte, base int64, c config.Config) store.Version {
 	t.Helper()
@@ -376,8 +376,11 @@ func TestLegacyHistoryConversionNeverRestoresCredentials(t *testing.T) {
 		t.Fatal("converted snapshot not activated", err)
 	}
 	updated, _ := s.Version(ctx, 2)
-	plain, err := g.Open(nil, updated.Data[:g.NonceSize()], updated.Data[g.NonceSize():], []byte("upstream-gateway-schema-5"))
-	if err != nil || bytes.Contains(plain, []byte("OLD_")) || bytes.Contains(plain, []byte(`"key":`)) || bytes.Contains(plain, []byte("internal_token")) {
+	plain, err := g.Open(nil, updated.Data[:g.NonceSize()], updated.Data[g.NonceSize():], []byte(fmt.Sprintf("upstream-gateway-schema-%d", config.Schema)))
+	if err != nil {
+		t.Fatal("cannot decrypt migrated snapshot", err)
+	}
+	if bytes.Contains(plain, []byte("OLD_")) || bytes.Contains(plain, []byte(`"key":`)) || bytes.Contains(plain, []byte("internal_token")) {
 		t.Fatal("old credentials persisted in new snapshot")
 	}
 	kept, _ := s.Version(ctx, original.ID)

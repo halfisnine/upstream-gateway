@@ -223,10 +223,6 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	path := "/" + parts[3]
 	proto := protocol(path)
-	if proto == "" {
-		fail("", 404)
-		return
-	}
 	snap := p.node.Current()
 	if snap == nil || !p.node.Ready() {
 		fail(proto, 503)
@@ -237,34 +233,69 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		fail(proto, 404)
 		return
 	}
-	if _, ok = ch.Protocols[proto]; !ok {
-		fail(proto, 404)
-		return
+	passthrough := true
+	var selected config.CompiledTemplate
+	if snap.LegacyRouting {
+		passthrough = false
+		for _, route := range ch.PathAllowlist {
+			if route.Method == r.Method && route.Path == path {
+				proto, passthrough = route.Protocol, true
+				break
+			}
+		}
+		if _, ok := ch.Protocols[proto]; !ok {
+			fail(proto, 404)
+			return
+		}
+		if !passthrough && r.Method != http.MethodPost {
+			w.Header().Set("Allow", "POST")
+			fail(proto, 405)
+			return
+		}
+		if !passthrough && !validQuery(r, proto) {
+			fail(proto, 400)
+			return
+		}
+		typ, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+		if !passthrough && (err != nil || typ != "application/json" || len(r.Header.Values("Content-Type")) != 1 || r.Header.Get("Content-Encoding") != "") {
+			fail(proto, 400)
+			return
+		}
+	} else {
+		proto = ""
+		for _, templateID := range ch.InspectionTemplates {
+			t := snap.Templates[templateID]
+			if t.Match(r.Method, path) {
+				proto, passthrough, selected = t.Protocol, false, t
+				break
+			}
+		}
 	}
-	if r.Method != http.MethodPost {
-		w.Header().Set("Allow", "POST")
-		fail(proto, 405)
-		return
-	}
-	if !validQuery(r, proto) {
+	if !config.ValidAllowedMethod(r.Method) || r.Header.Get("Upgrade") != "" {
 		fail(proto, 400)
 		return
 	}
-	key, originalCredential, validCredential := requestCredential(r, proto)
-	if !validCredential {
-		fail(proto, 401)
-		return
-	}
-	typ, _, e := mime.ParseMediaType(r.Header.Get("Content-Type"))
-	if e != nil || typ != "application/json" || len(r.Header.Values("Content-Type")) != 1 || r.Header.Get("Content-Encoding") != "" {
+	if _, err := url.ParseQuery(r.URL.RawQuery); err != nil {
 		fail(proto, 400)
 		return
+	}
+	key, originalCredential := "", ""
+	if !passthrough || snap.LegacyRouting {
+		var valid bool
+		key, originalCredential, valid = requestCredential(r, proto)
+		if !valid {
+			fail(proto, 401)
+			return
+		}
 	}
 	if r.ContentLength > 16<<20 {
 		fail(proto, 413)
 		return
 	}
 	eff := ch.Effective(proto)
+	if passthrough && !snap.LegacyRouting {
+		eff = config.Endpoint{BaseURL: ch.BaseURL}
+	}
 	target, _ := url.Parse(eff.BaseURL)
 	release, admitted := p.node.admit(target)
 	if !admitted {
@@ -280,7 +311,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	target.RawQuery = r.URL.RawQuery
 	// MaxBytesReader bounds streaming uploads; unknown-size requests stay non-replayable.
 	body := http.MaxBytesReader(w, r.Body, 16<<20)
-	out, err := http.NewRequestWithContext(ctx, http.MethodPost, target.String(), body)
+	out, err := http.NewRequestWithContext(ctx, r.Method, target.String(), body)
 	if err != nil {
 		fail(proto, 502)
 		return
@@ -288,12 +319,15 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	out.ContentLength = r.ContentLength
 	out.GetBody = nil
 	hop := connectionHeaders(r.Header)
+	if passthrough || !snap.LegacyRouting {
+		copyPassthroughRequestHeaders(out.Header, r.Header)
+	}
 	for _, h := range []string{"Content-Type", "Accept"} {
 		if !hop[h] {
 			out.Header.Set(h, r.Header.Get(h))
 		}
 	}
-	if out.Header.Get("Content-Type") == "" {
+	if snap.LegacyRouting && !passthrough && out.Header.Get("Content-Type") == "" {
 		fail(proto, 400)
 		return
 	}
@@ -308,16 +342,23 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	out.Header.Set("Accept-Encoding", "identity")
-	h := authHeader(eff.Auth)
-	credential := key
-	if h == "Authorization" {
-		credential = "Bearer " + credential
+	if !passthrough || out.Header.Get("Accept-Encoding") == "" {
+		out.Header.Set("Accept-Encoding", "identity")
 	}
-	if eff.Auth == config.DefaultAuth(proto) {
-		credential = originalCredential
+	if !passthrough || snap.LegacyRouting {
+		for _, name := range []string{"Authorization", "X-Api-Key", "X-Goog-Api-Key"} {
+			out.Header.Del(name)
+		}
+		h := authHeader(eff.Auth)
+		credential := key
+		if h == "Authorization" {
+			credential = "Bearer " + credential
+		}
+		if eff.Auth == config.DefaultAuth(proto) {
+			credential = originalCredential
+		}
+		out.Header.Set(h, credential)
 	}
-	out.Header.Set(h, credential)
 	resp, err := p.transport.RoundTrip(out)
 	if err != nil {
 		if r.Context().Err() != nil {
@@ -335,5 +376,15 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer resp.Body.Close()
-	p.handleResponse(observed, r, resp, snap, ch.ID, proto, id, cancel)
+	forceHTTP := false
+	if !snap.LegacyRouting && !passthrough {
+		forceHTTP = selected.ChecksStatus(resp.StatusCode)
+		checkBody := selected.Mode == "json_sse" && resp.StatusCode == 200 && (snap.Inspect || selected.LegacyStatusSelection)
+		passthrough = !forceHTTP && !checkBody
+	}
+	if passthrough {
+		p.passthroughResponse(observed, r, resp, cancel)
+		return
+	}
+	p.handleResponse(observed, r, resp, snap, ch.ID, proto, id, cancel, forceHTTP)
 }

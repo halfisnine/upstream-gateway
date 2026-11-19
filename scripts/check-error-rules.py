@@ -52,7 +52,7 @@ def main():
                 streams.append(stream)
                 processes.append(subprocess.Popen([binary], env=env, stdout=stream, stderr=stream))
             time.sleep(.5)
-            env.update(GATEWAY_RULES_CHECK_ADMIN=f"http://127.0.0.1:{ports[0]}", GATEWAY_RULES_CHECK_DATA=f"http://127.0.0.1:{ports[1]}", GATEWAY_RULES_CHECK_SECOND_ADMIN=f"http://127.0.0.1:{ports[2]}", GATEWAY_RULES_CHECK_TOKEN_FILE=str(directory / "admin-token"))
+            env.update(GATEWAY_RULES_CHECK_ADMIN=f"http://127.0.0.1:{ports[0]}", GATEWAY_RULES_CHECK_DATA=f"http://127.0.0.1:{ports[1]}", GATEWAY_RULES_CHECK_SECOND_ADMIN=f"http://127.0.0.1:{ports[2]}", GATEWAY_RULES_CHECK_SECOND_DATA=f"http://127.0.0.1:{ports[3]}", GATEWAY_RULES_CHECK_TOKEN_FILE=str(directory / "admin-token"))
             env.setdefault("PLAYWRIGHT_MODULE", str(ROOT / ".cache/browser/node_modules/playwright"))
             env.setdefault("PLAYWRIGHT_BROWSERS_PATH", str(ROOT / ".cache/browser-binaries"))
             env.setdefault("FONTCONFIG_FILE", str(ROOT / ".cache/fonts.conf"))

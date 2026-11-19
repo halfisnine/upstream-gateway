@@ -20,7 +20,7 @@ const channels = Array.from({ length: 36 }, (_, i) => ({
   },
 }));
 const snapshots = new Map([
-  [1, { schema_version: 5, channels: structuredClone(channels) }],
+  [1, { schema_version: 7, channels: structuredClone(channels) }],
 ]);
 let latest = 1,
   posts = [],
@@ -73,7 +73,8 @@ const server = http.createServer(async (req, res) => {
         },
         config: snapshots.get(id),
       };
-    } else if (url.pathname === "/api/versions")
+    } else if (url.pathname === "/api/inspection-presets") result = [];
+    else if (url.pathname === "/api/versions")
       result = [...snapshots.keys()].reverse().map((id) => ({
         id,
         note: "浏览器模拟版本",
@@ -225,6 +226,11 @@ const server = http.createServer(async (req, res) => {
     assert.equal(posts.length, 0);
     await edit();
     await page.getByLabel("渠道名称", { exact: true }).fill("修改后的示例渠道");
+    assert.equal(
+      await page.locator("#channel-advanced").getAttribute("open"),
+      null,
+    );
+    await page.locator("#channel-advanced > summary").click();
     const gemini = page.locator("#editor-protocol-details details").filter({
       has: page.getByText("Gemini · 可选覆盖设置", { exact: true }),
     });
@@ -282,11 +288,13 @@ const server = http.createServer(async (req, res) => {
     await save();
     assert.match(await page.locator("#editor-error").innerText(), /已存在/);
     await page.getByLabel("渠道标识", { exact: true }).fill("test-new");
-    await page.getByLabel("OpenAI Chat", { exact: true }).uncheck();
+    assert.equal(
+      await page.getByLabel("OpenAI Chat", { exact: true }).isChecked(),
+      false,
+    );
     await save();
-    assert.match(await page.locator("#editor-error").innerText(), /至少启用/);
-    await page.getByLabel("OpenAI Chat", { exact: true }).check();
-    await save();
+    // A channel without inspection protocols is a valid default passthrough route.
+    await page.locator("#channel-editor").waitFor({ state: "hidden" });
     await page.locator("#protocol-filter").selectOption("gemini");
     assert.equal(
       await page
